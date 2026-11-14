@@ -1,0 +1,71 @@
+{
+  "packageName": "app.heyarca.drive",
+  "appDescription": "A driving companion that remembers the promises the driver made and closes them by voice during the trip.",
+  "invokeWord": "아르카",
+  "version": "1.0.0",
+  "actionCalls": [
+    {
+      "type": "function",
+      "function": {
+        "name": "BRIEF_MY_PROMISES",
+        "description": "Read out the open promises the driver made to other people that are due today.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "scope": {
+              "type": "string",
+              "enum": ["today", "this_trip", "all"],
+              "description": "Which open promises to brief."
+            }
+          },
+          "required": []
+        },
+        "component": "activity"
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "ADD_PROMISE",
+        "description": "Save a new promise the driver just made so it is tracked until it is closed.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "counterpart": {
+              "type": "string",
+              "description": "The person the promise was made to."
+            },
+            "content": {
+              "type": "string",
+              "description": "What the driver promised to do."
+            },
+            "dueDateTime": {
+              "type": "string",
+              "description": "When the promise is due, in ISO 8601 date and time format."
+            }
+          },
+          "required": ["counterpart", "content"]
+        },
+        "component": "activity"
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "SEND_ARRIVAL_UPDATE",
+        "description": "Send the person waiting at the current destination a short message with the estimated arrival time.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "counterpart": {
+              "type": "string",
+              "description": "The person to notify about the arrival time."
+            }
+          },
+          "required": []
+        },
+        "component": "activity"
+      }
+    }
+  ]
+}
