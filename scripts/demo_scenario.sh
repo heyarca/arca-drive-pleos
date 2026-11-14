@@ -25,14 +25,14 @@ b DEMO_DEST --es name 양재_미팅룸 --ed lat 37.4688 --ed lon 127.0390 --es a
 sleep 5; front; sleep 2; shot 01_parked
 
 # 1) P -> D : ARCA briefs by voice, screen goes voice-only
-gear Drive; speed 35 25 0; sleep 9; shot 02_depart_brief
+gear Drive; speed 35 25 0; sleep 12; shot 02_depart_brief
 
 # 2) driver: "응, 보내줘" -> arrival message scheduled
 b DEMO_PCM --es name yes_send; sleep 7; shot 03_arrival_scheduled
 
 # 3) driver dictates a reply to a promise while moving
 speed 62 30 0
-b DEMO_PCM --es name quote; sleep 11; shot 04_reply_draft
+b DEMO_PCM --es name quote; sleep 13; shot 04_reply_draft
 b DEMO_PCM --es name yes; sleep 7; shot 05_reply_sent
 
 # 4) 300 m geofence -> arrival notice goes out on its own
@@ -41,9 +41,9 @@ speed 28 0 20; adb emu geo fix 127.0406 37.4680 >/dev/null; sleep 6
 adb logcat -d -s ARCA | grep -q "GEOFENCE ENTER" || b DEMO_NEAR; sleep 4; shot 06_near_sent
 
 # 5) new promise heard in the car
-b DEMO_PCM --es name remember; sleep 11; shot 07_remember
+b DEMO_PCM --es name remember; sleep 12; shot 07_remember
 
 # 6) park -> screen opens: 1-tap cards + closed-with-evidence list
-speed 0 0 60; sleep 2; gear Park; sleep 8; shot 08_parked_cards
+speed 0 0 60; sleep 2; gear Park; sleep 9; shot 08_parked_cards
 sleep 3
 if [ -n "$REC" ]; then adb shell pkill -INT screenrecord; wait $RECPID 2>/dev/null; sleep 2; adb pull /data/local/tmp/demo.mp4 $OUT/demo_raw.mp4 >/dev/null && echo "rec ok"; fi

@@ -47,17 +47,17 @@ class CompanionBrain(private val store: PromiseStore, private val pleos: PleosBr
 
     fun briefOnDeparture() {
         val open = store.open()
-        if (open.isEmpty()) { speak("오늘 남은 약속 없음", "오늘 닫을 약속은 없어요. 운전에만 집중하세요."); return }
+        if (open.isEmpty()) { speak("오늘 닫을 약속은 없어요.", "오늘 닫을 약속은 없어요. 운전에만 집중하세요."); return }
         val tied = open.firstOrNull { it.place.isNotBlank() }
         if (tied != null) {
             awaiting = Pending.ArrivalSend(tied.id)
             speak(
-                "약속 ${open.size}개 · 도착 전 1건",
+                "${tied.counterpart}께 도착 시간,\n제가 알려드릴까요?",
                 "출발하셨네요. 오늘 닫을 약속이 ${open.size}개예요. ${tied.counterpart}께 도착 시간 알려드리기로 하셨죠. " +
                     "도착 10분 전에 제가 보내드릴까요?",
             )
         } else {
-            speak("약속 ${open.size}개", "오늘 닫을 약속이 ${open.size}개예요. 정차하면 화면에 정리해둘게요.")
+            speak("오늘 닫을 약속 ${open.size}개.", "오늘 닫을 약속이 ${open.size}개예요. 정차하면 화면에 정리해둘게요.")
         }
     }
 
@@ -72,17 +72,17 @@ class CompanionBrain(private val store: PromiseStore, private val pleos: PleosBr
             is Pending.ArrivalSend -> if (yes) {
                 store.update(p.promiseId) { it.copy(status = Promise.Status.DRAFTED, evidence = "도착 10분 전 자동 발송 예약") }
                 awaiting = null
-                speak("도착 10분 전 자동 발송", "네, 도착 10분 전에 보낼게요.")
+                speak("도착 10분 전에 보낼게요.", "네, 도착 10분 전에 보낼게요.")
                 return
-            } else if (no) { awaiting = null; speak("알겠어요", "알겠어요. 직접 하실 걸로 둘게요."); return }
+            } else if (no) { awaiting = null; speak("알겠어요.", "알겠어요. 직접 하실 걸로 둘게요."); return }
             is Pending.Reply -> if (yes) {
                 val pr = store.items.value.first { it.id == p.promiseId }
                 store.send(pr.counterpart, p.text)
-                store.close(p.promiseId, "메시지 발송: \"${p.text}\"")
+                store.close(p.promiseId, "메시지 발송 · “${p.text}”")
                 awaiting = null
-                speak("보냈어요 · 약속 닫힘", "보냈어요. ${pr.counterpart} 건은 닫아둘게요.")
+                speak("보냈어요. ${pr.counterpart} 건은 닫았어요.", "보냈어요. ${pr.counterpart} 건은 닫아둘게요.")
                 return
-            } else if (no) { awaiting = null; speak("보류", "보류할게요. 정차하면 다시 보여드릴게요."); return }
+            } else if (no) { awaiting = null; speak("보류할게요.", "보류할게요. 정차하면 다시 보여드릴게요."); return }
             null -> {}
         }
 
@@ -102,22 +102,22 @@ class CompanionBrain(private val store: PromiseStore, private val pleos: PleosBr
             val m = Regex("(.+?)(한테|에게|께|이랑|하고|랑)\\s*(.+)").find(t)
             val whoRaw = m?.groupValues?.get(1)?.trim() ?: "상대"
             val who = matchPerson(whoRaw)?.counterpart ?: whoRaw
-            val what = (m?.groupValues?.get(3) ?: t).replace(Regex("\\s*(기억해|기억|줘)\\.?\\s*$"), "").trim()
-            val core = what.replace(Regex("\\s*했(어|어요|다)?$"), "").trim()
+            val what = (m?.groupValues?.get(3) ?: t).replace(Regex("[,.?!\\s]*(기억해 ?둬|기억해|기억|줘)?[.?!]*\\s*$"), "").trim()
+            val core = what.replace(Regex("[,\\s]*했(어|어요|다)?[,.]*$"), "").trim()
             val existing = matchPerson(whoRaw)?.takeIf { it.status != Promise.Status.CLOSED }
             if (existing != null) {
                 store.update(existing.id) { it.copy(content = core.removeSuffix("하기로").trim() + " 확정 회신", due = "", source = "차 안 음성 · 갱신") }
-                speak("약속 갱신 · ${existing.counterpart}", "기억해둘게요. ${existing.counterpart}와 $core 한 걸로 바꿔둘게요.")
+                speak("${existing.counterpart}와의 약속,\n바꿔서 기억해둘게요.", "기억해둘게요. ${existing.counterpart}와 $core 한 걸로 바꿔둘게요.")
             } else {
                 val p = store.add(who, core, "", "차 안 음성")
-                speak("새 약속 · ${p.counterpart}", "기억해둘게요. ${p.counterpart}와 $core 한 약속, 제가 챙길게요.")
+                speak("${p.counterpart}와의 약속,\n제가 챙길게요.", "기억해둘게요. ${p.counterpart}와 $core 한 약속, 제가 챙길게요.")
             }
             return
         }
 
         if (t.contains("뭐") && (t.contains("약속") || t.contains("남았"))) { briefOnDeparture(); return }
 
-        speak("정차 후 정리", "들었어요. 정차하면 화면에 정리해둘게요.")
+        speak("정차하면 정리해둘게요.", "들었어요. 정차하면 화면에 정리해둘게요.")
     }
 
     /** Turn a spoken fragment into a polite one-line message. */
@@ -151,12 +151,12 @@ class CompanionBrain(private val store: PromiseStore, private val pleos: PleosBr
         val msg = "${p.place} 거의 다 왔어요. 약 ${eta}분 뒤 도착합니다."
         pleos.car.value = pleos.car.value.copy(remainSec = eta * 60, remainM = 300)
         store.send(p.counterpart, msg)
-        store.close(p.id, "도착 알림 발송: \"$msg\"")
-        speak("${p.counterpart}께 도착 알림 보냄", "${p.counterpart}께 ${eta}분 뒤 도착한다고 보냈어요.")
+        store.close(p.id, "도착 알림 발송 · “$msg”")
+        speak("${p.counterpart}께\n${eta}분 뒤 도착한다고 보냈어요.", "${p.counterpart}께 ${eta}분 뒤 도착한다고 보냈어요.")
     }
 
     private fun onArrived(name: String) {
-        speak("$name 도착", "$name 에 도착했어요.")
+        speak("$name, 도착했어요.", "$name 에 도착했어요.")
     }
 
     // 4) Gear P : the screen opens up. Only then show text and 1-tap cards.
@@ -173,7 +173,7 @@ class CompanionBrain(private val store: PromiseStore, private val pleos: PleosBr
         refreshCards()
         val open = store.open()
         val closed = store.items.value.count { it.status == Promise.Status.CLOSED }
-        speak("주차 · 닫힌 약속 $closed · 남은 ${open.size}", "주차했어요. 이번 이동에서 ${closed}건 닫았고, 남은 ${open.size}건은 화면에 올려둘게요.")
+        speak("이번 길에 ${closed}건을 닫았어요.", "주차했어요. 이번 이동에서 ${closed}건 닫았고, 남은 ${open.size}건은 화면에 올려둘게요.")
     }
 
     fun tapCard(id: String) {
@@ -184,8 +184,8 @@ class CompanionBrain(private val store: PromiseStore, private val pleos: PleosBr
             else -> p.content
         })
         store.send(p.counterpart, msg)
-        store.close(p.id, "1탭 승인 발송: \"$msg\"")
+        store.close(p.id, "1탭 승인 발송 · “$msg”")
         refreshCards()
-        line.value = "${p.counterpart} 건 닫힘"
+        line.value = "${p.counterpart}께 보냈어요."
     }
 }

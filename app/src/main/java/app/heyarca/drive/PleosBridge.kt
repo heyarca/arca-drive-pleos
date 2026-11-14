@@ -67,6 +67,7 @@ class PleosBridge(private val ctx: Context) {
     val sdk = MutableStateFlow(SdkStatus())
     val heard = MutableStateFlow("")          // latest STT text
     val speaking = MutableStateFlow(false)
+    val listening = MutableStateFlow(false)   // STT recognition in progress (orb LISTENING state)
     val level = MutableStateFlow(0.0)         // mic / voice level for the orb
 
     var onUtterance: ((String) -> Unit)? = null
@@ -273,12 +274,13 @@ class PleosBridge(private val ctx: Context) {
     private val sttListener = object : ResultListener {
         override fun onUpdated(p0: String, p1: Boolean) {
             heard.value = p0
+            if (p1) { listening.value = false; level.value = 0.0; Log.i(TAG, "HEARD: $p0") }
             if (p1 && p0.isNotBlank()) onUtterance?.invoke(p0)
         }
         override fun onUpdatedEpdData(p0: Long, p1: Long) {}
-        override fun onStartedRecognition() { mark { copy(stt = "OK · listening") } }
-        override fun onEndedRecognition() { mark { copy(stt = "OK · on-device ko-KR") }; level.value = 0.0 }
-        override fun onError(p0: SttError) { mark { copy(stt = "ERR $p0") } }
+        override fun onStartedRecognition() { listening.value = true; mark { copy(stt = "OK · listening") } }
+        override fun onEndedRecognition() { listening.value = false; mark { copy(stt = "OK · on-device ko-KR") }; level.value = 0.0 }
+        override fun onError(p0: SttError) { listening.value = false; mark { copy(stt = "ERR $p0") } }
         override fun onReady() {}
         override fun onUpdatedRms(p0: Double) { level.value = p0 }
     }
@@ -287,10 +289,21 @@ class PleosBridge(private val ctx: Context) {
 
     /** Feed recorded 16 kHz mono PCM (ON_DEVICE mode) — used for repeatable demo runs in the emulator. */
     fun listenPcm(pcm: ByteArray) {
+        Log.i(TAG, "PCM start ${pcm.size / 32000.0}s")
         Thread {
             runCatching {
-                pcm.asList().chunked(3200).forEach { stt?.sendAudio(it.toByteArray()); Thread.sleep(100) }
+                listening.value = true
+                pcm.asList().chunked(3200).forEach { c ->
+                    val b = c.toByteArray()
+                    // drive the orb from the PCM itself too (RMS of the chunk, dB-ish 0..12) in case the SDK does not report RMS for sendAudio
+                    var acc = 0.0; var i = 0
+                    while (i + 1 < b.size) { val v = ((b[i + 1].toInt() shl 8) or (b[i].toInt() and 0xFF)).toShort().toDouble(); acc += v * v; i += 2 }
+                    val rms = Math.sqrt(acc / (b.size / 2).coerceAtLeast(1))
+                    level.value = (20 * Math.log10(rms.coerceAtLeast(1.0)) - 30).coerceIn(0.0, 12.0) / 1.0
+                    stt?.sendAudio(b); Thread.sleep(100)
+                }
                 stt?.completeAudioSend()
+                level.value = 0.0
             }
         }.start()
     }
@@ -311,7 +324,7 @@ class PleosBridge(private val ctx: Context) {
     }
 
     private val ttsListener = object : EventListener {
-        override fun onStart() { speaking.value = true }
+        override fun onStart() { ttsStarted = true; speaking.value = true }
         override fun onReady() {}
         override fun onDone() { speaking.value = false; level.value = 0.0 }
         override fun onError(p0: TtsError) { speaking.value = false; mark { copy(tts = "ERR $p0") } }
@@ -319,8 +332,18 @@ class PleosBridge(private val ctx: Context) {
         override fun onUpdatedRms(p0: Double) { level.value = p0 }
     }
 
+    @Volatile private var ttsStarted = false
+    private var sayId = 0
+
     fun say(text: String) {
         Log.i(TAG, "SAY: $text")
+        // orb SPEAKING state: from the TTS onStart/onDone callbacks; if the platform gives none
+        // (e.g. an emulator without an audio device), fall back to an estimate from the text length.
+        speaking.value = true
+        val id = ++sayId
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            if (id == sayId && !ttsStarted) speaking.value = false
+        }, 900L + text.length * 150L)
         if (ttsReady) runCatching { tts?.speak(text, true) } else pendingSpeech.addLast(text)
     }
 

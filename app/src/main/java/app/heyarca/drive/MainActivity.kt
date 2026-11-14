@@ -34,7 +34,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.json.JSONObject
-import kotlin.math.min
+import androidx.compose.animation.*
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 
 private val Ink = Color(0xFF0E0B09)        // warm black
 private val Ink2 = Color(0xFF171210)
@@ -43,6 +48,7 @@ private val Ember = Color(0xFFE5622A)      // burnt orange
 private val EmberHi = Color(0xFFFF8A4C)
 private val Bone = Color(0xFFF3ECE4)
 private val Mute = Color(0xFF8E827A)
+private val Faint = Color(0xFF5E534C)
 
 private val Kr = FontFamily(
     Font(R.font.pretendard_regular, FontWeight.Normal),
@@ -95,155 +101,170 @@ private fun Screen(app: ArcaDriveApp, brain: CompanionBrain) {
     val line by brain.line.collectAsState()
     val heard by app.pleos.heard.collectAsState()
     val speaking by app.pleos.speaking.collectAsState()
-    val cards by brain.cards.collectAsState()
+    val listening by app.pleos.listening.collectAsState()
+    val level by app.pleos.level.collectAsState()
     val items by app.store.items.collectAsState()
     val outbox by app.store.outbox.collectAsState()
     val driving = car.gear != "P" || car.restricted
+    val mode = when { listening -> OrbMode.LISTENING; speaking -> OrbMode.SPEAKING; else -> OrbMode.IDLE }
 
-    Box(
-        Modifier.fillMaxSize().background(Ink)
-            .background(Brush.radialGradient(listOf(Ember.copy(alpha = 0.16f), Color.Transparent), center = Offset(1400f, 1600f), radius = 1400f))
-    ) {
-        Column(Modifier.fillMaxSize().padding(horizontal = 56.dp, vertical = 36.dp)) {
-            TopBar(car, driving)
-            Spacer(Modifier.height(20.dp))
-            Row(Modifier.weight(1f).fillMaxWidth()) {
-                // Left: the companion. Same layout in P and D; only density changes.
-                Column(Modifier.weight(1.15f).fillMaxHeight(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                    Orb(app, speaking, onTap = { app.pleos.listen() })
-                    Spacer(Modifier.height(36.dp))
-                    AnimatedContent(line, label = "line") { l ->
-                        Text(l.ifBlank { "말로만. 손은 핸들에." }, size = if (driving) 42 else 36, weight = FontWeight.ExtraBold, color = Bone, maxLines = 2, center = true)
-                    }
-                    Spacer(Modifier.height(14.dp))
-                    if (heard.isNotBlank()) Text("들은 말  “$heard”", 22, FontWeight.Normal, Mute, maxLines = 1, center = true)
-                }
-                Spacer(Modifier.width(40.dp))
-                // Right: hidden while driving (glance budget = 0). Opens only in P.
-                Box(Modifier.weight(1f).fillMaxHeight()) {
-                    if (driving) DrivingPanel(car, items.count { it.status == Promise.Status.CLOSED }, items.count { it.status != Promise.Status.CLOSED }) else ParkedPanel(cards, items, outbox) { brain.tapCard(it) }
-                }
-            }
-            SdkStrip(sdk)
-        }
-    }
-}
+    // one spring drives the whole layout between "driving" (orb centre stage) and "parked" (orb left, cards right)
+    val p by animateFloatAsState(if (driving) 0f else 1f, spring(dampingRatio = 0.86f, stiffness = 60f), label = "park")
 
-@Composable
-private fun TopBar(car: CarState, driving: Boolean) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text("ARCA", 26, FontWeight.Black, Bone, maxLines = 1, family = En)
-        Spacer(Modifier.width(12.dp))
-        Text("Drive", 24, FontWeight.Bold, Ember, family = En)
-        Spacer(Modifier.weight(1f))
-        Pill(if (driving) "주행 중 · 음성 전용" else "주차 · 화면 열림", if (driving) Ember else Color(0xFF3B302A))
-        Spacer(Modifier.width(12.dp))
-        Pill("GEAR ${car.gear}", Color(0xFF241C18))
-        car.socPct?.let { Spacer(Modifier.width(12.dp)); Pill("배터리 $it%", Color(0xFF241C18)) }
-    }
-}
+    BoxWithConstraints(Modifier.fillMaxSize().background(Ink)) {
+        val W = maxWidth; val H = maxHeight
+        val orbBox = lerpDp(H * 0.66f, H * 0.72f, p)
+        val cx = lerpDp(W / 2, W * 0.255f, p)
+        val cy = lerpDp(H * 0.43f, H * 0.47f, p)
+        val textW = lerpDp(W * 0.72f, W * 0.42f, p)
 
-@Composable
-private fun Orb(app: ArcaDriveApp, speaking: Boolean, onTap: () -> Unit) {
-    val lvl by app.pleos.level.collectAsState()
-    val t = rememberInfiniteTransition(label = "orb")
-    val breathe by t.animateFloat(0.94f, 1.04f, infiniteRepeatable(tween(2600, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "b")
-    val boost = (min(lvl, 12.0) / 12.0).toFloat() * 0.12f + if (speaking) 0.05f else 0f
-    Box(Modifier.size(340.dp).clip(CircleShape).clickable { onTap() }, contentAlignment = Alignment.Center) {
+        // ambient light that sits behind the orb and follows it
         Canvas(Modifier.fillMaxSize()) {
-            val r = size.minDimension / 2
-            drawCircle(Brush.radialGradient(listOf(Ember.copy(alpha = 0.55f), Color.Transparent), radius = r), r * (breathe + boost))
-            drawCircle(Brush.radialGradient(listOf(EmberHi, Ember, Color(0xFF8C2E10)), center = Offset(r * 0.8f, r * 0.75f), radius = r * 0.7f), r * 0.52f * (breathe + boost / 2))
-            // two calm eyes, the ARCA companion
-            val ey = r * 0.92f
-            drawRoundRect(Bone, topLeft = Offset(r * 0.78f, ey), size = androidx.compose.ui.geometry.Size(r * 0.11f, r * 0.15f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(r * 0.06f))
-            drawRoundRect(Bone, topLeft = Offset(r * 1.11f, ey), size = androidx.compose.ui.geometry.Size(r * 0.11f, r * 0.15f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(r * 0.06f))
+            val c = Offset(cx.toPx(), cy.toPx())
+            drawRect(Brush.radialGradient(listOf(Ember.copy(alpha = 0.13f), Ember.copy(alpha = 0.04f), Color.Transparent), center = c, radius = size.width * 0.55f))
+            drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.35f)), startY = size.height * 0.6f, endY = size.height))
         }
-    }
-}
 
-@Composable
-private fun DrivingPanel(car: CarState, closed: Int, open: Int) {
-    Column(Modifier.fillMaxSize().clip(RoundedCornerShape(28.dp)).background(Ink2).border(1.dp, Line, RoundedCornerShape(28.dp)).padding(40.dp),
-        verticalArrangement = Arrangement.Center) {
-        Text("다음 도착", 22, FontWeight.SemiBold, Mute)
-        Spacer(Modifier.height(10.dp))
-        Text(car.destination ?: "목적지 없음", 46, FontWeight.ExtraBold, Bone, maxLines = 1)
-        Spacer(Modifier.height(8.dp))
-        val eta = car.remainSec?.let { if (it < 90) "곧 도착" else "${it / 60}분" } ?: "경로 안내 중"
-        val km = car.remainM?.let { String.format("%.1fkm", it / 1000.0) } ?: ""
-        Text("$eta  $km", 40, FontWeight.Bold, Ember, family = En)
-        Spacer(Modifier.height(40.dp))
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text("$closed", 96, FontWeight.Black, Bone, maxLines = 1, family = En)
-            Spacer(Modifier.width(14.dp))
-            Text("닫힌 약속", 24, FontWeight.Bold, Mute, maxLines = 1)
-            Spacer(Modifier.width(48.dp))
-            Text("$open", 96, FontWeight.Black, Ember, maxLines = 1, family = En)
-            Spacer(Modifier.width(14.dp))
-            Text("남은 약속", 24, FontWeight.Bold, Mute, maxLines = 1)
+        // the orb
+        Box(Modifier.offset(cx - orbBox / 2, cy - orbBox / 2).size(orbBox)) {
+            LivingOrb(mode, (level / 10.0).toFloat(), outbox.size, calm = driving, modifier = Modifier.fillMaxSize())
+            Box(Modifier.align(Alignment.Center).size(orbBox * 0.5f).clip(CircleShape).clickable { app.pleos.listen() })
         }
-        Spacer(Modifier.height(34.dp))
-        Text("주행 중엔 목록·키보드를 띄우지 않아요. ARCA가 말로 묻고, 말로 닫습니다.", 20, FontWeight.Normal, Mute, maxLines = 2)
-    }
-}
 
-@Composable
-private fun ParkedPanel(cards: List<CompanionBrain.Card>, items: List<Promise>, outbox: List<String>, onTap: (String) -> Unit) {
-    val closed = items.filter { it.status == Promise.Status.CLOSED }
-    Column(Modifier.fillMaxSize().clip(RoundedCornerShape(28.dp)).background(Ink2).border(1.dp, Line, RoundedCornerShape(28.dp)).padding(36.dp)) {
-        Text("남은 약속 · 1탭으로 닫기", 26, FontWeight.Bold, Bone)
-        Spacer(Modifier.height(14.dp))
-        if (cards.isEmpty()) Text("모두 닫혔어요.", 22, FontWeight.Normal, Mute)
-        cards.take(3).forEach { c ->
-            Row(Modifier.fillMaxWidth().padding(bottom = 14.dp).clip(RoundedCornerShape(22.dp)).background(Ink)
-                .border(1.dp, Line, RoundedCornerShape(22.dp)).padding(22.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f).padding(end = 18.dp)) {
-                    Text(c.title, 24, FontWeight.Bold, Bone, maxLines = 2)
-                    Text(c.body, 18, FontWeight.Normal, Mute, maxLines = 1)
-                }
-                Box(Modifier.clip(RoundedCornerShape(16.dp)).background(Ember).clickable { onTap(c.id) }.padding(horizontal = 26.dp, vertical = 16.dp)) {
-                    Text(c.action, 22, FontWeight.Bold, Ink)
+        // the one line
+        Box(Modifier.offset(cx - textW / 2, cy + orbBox * 0.40f).width(textW)) {
+            val shown = if (listening && heard.isNotBlank()) "“$heard…" else line.ifBlank { if (driving) "말로만. 손은 핸들에." else "" }
+            AnimatedContent(shown to (listening && heard.isNotBlank()), transitionSpec = {
+                (fadeIn(tween(700, delayMillis = 120)) + slideInVertically(spring(dampingRatio = 0.9f, stiffness = 120f)) { it / 5 })
+                    .togetherWith(fadeOut(tween(260)))
+            }, label = "line") { (l, isHeard) ->
+                // first line = what ARCA says; an optional second line (a quoted draft) is quieter
+                val main = l.substringBefore('\n'); val sub = l.substringAfter('\n', "")
+                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(main, size = if (driving) 50 else 38, weight = if (isHeard) FontWeight.Normal else FontWeight.SemiBold,
+                        color = if (isHeard) Bone.copy(alpha = 0.78f) else Bone, maxLines = 2, center = true, track = -0.6f)
+                    if (sub.isNotBlank()) {
+                        Spacer(Modifier.height(10.dp))
+                        Text(sub, size = if (driving) 36 else 28, weight = FontWeight.Normal, color = Bone.copy(alpha = 0.62f), maxLines = 2, center = true, track = -0.3f)
+                    }
                 }
             }
         }
-        Spacer(Modifier.height(26.dp))
-        if (closed.isNotEmpty()) Text("닫힌 약속 ${closed.size} · 증거와 함께", 24, FontWeight.Bold, Ember)
-        Spacer(Modifier.height(8.dp))
-        closed.takeLast(3).forEach {
-            Row { Text("✓", 21, FontWeight.Bold, Ember); Spacer(Modifier.width(10.dp))
-                Column { Text(it.counterpart, 21, FontWeight.Bold, Bone); Text(it.evidence, 19, FontWeight.Normal, Bone.copy(alpha = 0.8f), maxLines = 2) } }
-            Spacer(Modifier.height(10.dp)) }
+
+        // top: quiet status, no chrome
+        Row(Modifier.fillMaxWidth().padding(horizontal = 64.dp, vertical = 44.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(10.dp).clip(CircleShape).background(if (driving) Ember else Faint))
+            Spacer(Modifier.width(14.dp))
+            Text(if (driving) "주행 중 · 음성으로만" else "주차 중", 26, FontWeight.SemiBold, if (driving) Bone.copy(alpha = 0.85f) else Mute)
+            Spacer(Modifier.weight(1f))
+            car.destination?.let { d ->
+                Text(d, 26, FontWeight.SemiBold, Mute)
+                val eta = car.remainSec?.let { if (it < 90) "곧 도착" else "${it / 60}분" }
+                val km = car.remainM?.let { String.format("%.1f km", it / 1000.0) }
+                listOfNotNull(eta, km).takeIf { it.isNotEmpty() }?.let {
+                    Spacer(Modifier.width(18.dp))
+                    Text(it.joinToString("  ·  "), 26, FontWeight.Bold, Bone.copy(alpha = 0.9f), family = En)
+                }
+            }
+        }
+
+        // parked: elegant cards, only when the car is in P
+        val open = items.filter { it.status != Promise.Status.CLOSED }
+        val closed = items.filter { it.status == Promise.Status.CLOSED }
+        Box(Modifier.offset(x = W * 0.505f, y = 110.dp).width(W * 0.495f - 64.dp).height(H - 200.dp)
+            .graphicsLayer { alpha = ((p - 0.35f) / 0.65f).coerceIn(0f, 1f); translationX = (1f - p) * 80f }) {
+            if (p > 0.02f) ParkedCards(open, closed) { brain.tapCard(it) }
+        }
+
+        // footer: which car SDKs are live (parked only, very quiet)
+        if (p > 0.02f) Box(Modifier.align(Alignment.BottomStart).padding(horizontal = 64.dp, vertical = 30.dp).alpha(p)) { SdkLine(sdk) }
+    }
+}
+
+private fun lerpDp(a: Dp, b: Dp, t: Float): Dp = a + (b - a) * t
+
+@Composable
+private fun ParkedCards(open: List<Promise>, closed: List<Promise>, onTap: (String) -> Unit) {
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
+        Label("남은 약속", open.size)
+        Spacer(Modifier.height(16.dp))
+        if (open.isEmpty()) Text("모두 닫혔어요.", 26, FontWeight.SemiBold, Mute)
+        open.take(3).forEachIndexed { i, pr ->
+            Glass(Modifier.fillMaxWidth().padding(bottom = 14.dp)) {
+                Row(Modifier.padding(horizontal = 34.dp, vertical = 30.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f).padding(end = 20.dp)) {
+                        Text(pr.counterpart, 24, FontWeight.SemiBold, EmberHi, maxLines = 1)
+                        Spacer(Modifier.height(8.dp))
+                        Text(pr.content, 34, FontWeight.Bold, Bone, maxLines = 2, track = -0.5f)
+                        Spacer(Modifier.height(8.dp))
+                        Text(listOf(pr.due.takeLast(5).takeIf { pr.due.isNotBlank() }?.let { "오늘 $it" }, pr.source).filterNotNull().filter { it.isNotBlank() }.joinToString("  ·  "),
+                            21, FontWeight.Normal, Mute, maxLines = 1)
+                    }
+                    Box(Modifier.clip(RoundedCornerShape(50)).background(Brush.linearGradient(listOf(EmberHi, Ember)))
+                        .clickable { onTap(pr.id) }.padding(horizontal = 36.dp, vertical = 20.dp)) {
+                        Text("보내기", 26, FontWeight.Bold, Ink)
+                    }
+                }
+            }
+        }
+        if (closed.isNotEmpty()) {
+            Spacer(Modifier.height(26.dp))
+            Label("닫힌 약속", closed.size)
+            Spacer(Modifier.height(14.dp))
+            closed.takeLast(3).reversed().forEach { pr ->
+                Row(Modifier.padding(bottom = 18.dp)) {
+                    Text("✓", 24, FontWeight.Bold, Mute, maxLines = 1)
+                    Spacer(Modifier.width(18.dp))
+                    Column {
+                        Text(pr.counterpart, 24, FontWeight.SemiBold, Bone.copy(alpha = 0.72f), maxLines = 1)
+                        Spacer(Modifier.height(2.dp))
+                        Text(pr.evidence, 21, FontWeight.Normal, Mute, maxLines = 2)
+                    }
+                }
+            }
+        }
     }
 }
 
 @Composable
-private fun SdkStrip(s: SdkStatus) {
-    Row(Modifier.fillMaxWidth().padding(top = 18.dp), horizontalArrangement = Arrangement.spacedBy(22.dp)) {
-        Text("Pleos SDK live", 15, FontWeight.Bold, Ember, maxLines = 1)
+private fun Label(s: String, n: Int) {
+    Row(verticalAlignment = Alignment.Bottom) {
+        Text(s, 26, FontWeight.SemiBold, Bone.copy(alpha = 0.8f), maxLines = 1)
+        Spacer(Modifier.width(12.dp))
+        Text("$n", 26, FontWeight.Bold, EmberHi, maxLines = 1, family = En)
+    }
+}
+
+@Composable
+private fun Glass(modifier: Modifier, content: @Composable () -> Unit) {
+    val shape = RoundedCornerShape(30.dp)
+    Box(modifier.clip(shape)
+        .background(Brush.verticalGradient(listOf(Color(0xFF241B17), Color(0xFF161110))))
+        .border(1.dp, Brush.linearGradient(listOf(Ember.copy(alpha = 0.55f), Color.White.copy(alpha = 0.08f), Color.White.copy(alpha = 0.04f))), shape)) {
+        content()
+    }
+}
+
+@Composable
+private fun SdkLine(s: SdkStatus) {
+    Row(horizontalArrangement = Arrangement.spacedBy(26.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("Pleos SDK", 16, FontWeight.Bold, Mute, maxLines = 1, family = En)
         listOf("Vehicle" to s.vehicle, "NaviHelper" to s.navi, "FusedLocation" to s.location, "STT" to s.stt, "TTS" to s.tts, "UxRestrictions" to s.uxr)
             .forEach { (k, v) ->
-                val ok = v.startsWith("OK")
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(9.dp).clip(CircleShape).background(if (ok) Ember else Color(0xFF5A4E46)))
-                    Spacer(Modifier.width(7.dp))
-                    Text("$k · $v", 15, FontWeight.Normal, Mute, maxLines = 1)
+                    Box(Modifier.size(7.dp).clip(CircleShape).background(if (v.startsWith("OK")) Bone.copy(alpha = 0.55f) else Color(0xFF3A302A)))
+                    Spacer(Modifier.width(8.dp))
+                    Text(k, 16, FontWeight.Bold, Mute.copy(alpha = 0.8f), maxLines = 1, family = En)
                 }
             }
     }
 }
 
 @Composable
-private fun Pill(text: String, bg: Color) {
-    Box(Modifier.clip(RoundedCornerShape(50)).background(bg).padding(horizontal = 18.dp, vertical = 8.dp)) {
-        Text(text, 18, FontWeight.Bold, Bone)
-    }
-}
-
-@Composable
-private fun Text(s: String, size: Int, weight: FontWeight, color: Color, maxLines: Int = 2, family: FontFamily = Kr, center: Boolean = false) {
-    androidx.compose.material3.Text(s, style = TextStyle(fontFamily = family, fontWeight = weight, fontSize = size.sp, color = color, lineHeight = (size * 1.3).sp,
-        textAlign = if (center) androidx.compose.ui.text.style.TextAlign.Center else androidx.compose.ui.text.style.TextAlign.Start,
+private fun Text(s: String, size: Int, weight: FontWeight, color: Color, maxLines: Int = 2, family: FontFamily = Kr, center: Boolean = false, track: Float = 0f) {
+    androidx.compose.material3.Text(s, style = TextStyle(fontFamily = family, fontWeight = weight, fontSize = size.sp, color = color, lineHeight = (size * 1.32).sp,
+        letterSpacing = track.sp,
+        textAlign = if (center) TextAlign.Center else TextAlign.Start,
         lineBreak = androidx.compose.ui.text.style.LineBreak(androidx.compose.ui.text.style.LineBreak.Strategy.Balanced, androidx.compose.ui.text.style.LineBreak.Strictness.Strict, androidx.compose.ui.text.style.LineBreak.WordBreak.Phrase)),
-        maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+        maxLines = maxLines, overflow = TextOverflow.Ellipsis, modifier = if (center) Modifier.fillMaxWidth() else Modifier)
 }

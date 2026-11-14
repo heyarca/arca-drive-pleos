@@ -4,7 +4,7 @@
 set -x
 source ~/work/hyundai-pleos/tools/env.sh
 cd ~/work/hyundai-pleos/arca-drive
-SETTLE=50 bash scripts/fresh_emulator.sh
+APK=${APK:-$HOME/work/hyundai-pleos/arca-drive/app/build/outputs/apk/release/app-release.apk} SETTLE=50 bash scripts/fresh_emulator.sh
 sleep 6
 adb logcat -c
 rm -rf /tmp/arca_demo

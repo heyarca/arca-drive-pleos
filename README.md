@@ -7,7 +7,7 @@
 
 ## APK
 
-- `apk/ArcaLabs_ARCADrive_release.apk` (release 빌드, v1.0.0, 서명됨)
+- `apk/ArcaLabs_ARCADrive_release.apk` (release 빌드, v1.1.0, 서명됨)
 - 패키지: `app.heyarca.drive`
 
 ## 개발·테스트 환경
@@ -38,7 +38,7 @@ Android Automotive `CarUxRestrictionsManager`도 함께 확인해, 주행 제한
 1. Pleos Playground 개발 문서대로 Pleos Connect 에뮬레이터를 실행합니다.
 2. `adb install -r -g apk/ArcaLabs_ARCADrive_release.apk`
 3. 앱 실행: `adb shell am start -n app.heyarca.drive/.MainActivity` (또는 앱 목록의 ARCA Drive)
-4. Virtual Console(에뮬레이터 차량 제어)에서 기어를 D로 바꾸면 ARCA가 먼저 브리핑합니다. 가운데 주황색 구체를 누르면 마이크(STT)로 말할 수 있습니다.
+4. Virtual Console(에뮬레이터 차량 제어)에서 기어를 D로 바꾸면 ARCA가 먼저 브리핑합니다. 가운데 구체(ARCA)를 누르면 마이크(STT)로 말할 수 있습니다.
 
 ### 시연 시나리오 자동 재현
 
@@ -47,6 +47,8 @@ adb forward tcp:8088 tcp:8088          # Virtual Console HTTP API
 bash scripts/demo_scenario.sh          # 기어/속도 변경 + 녹음된 운전자 음성(PCM)을 STT SDK에 입력
 REC=1 bash scripts/demo_scenario.sh    # 화면 녹화 포함
 ```
+
+운전자 음성 PCM(16 kHz mono s16le, `app/src/main/assets/demo/`)은 합성한 자연스러운 한국어 음성이며, 실제 Pleos STT SDK(ON_DEVICE)에 넣어 인식합니다.
 
 데모용 브로드캐스트(테스트 훅): `app.heyarca.drive.DEMO_PCM --es name <yes_send|quote|yes|remember>` (음성 PCM을 STT SDK로), `DEMO_DEST`, `DEMO_NEAR`(지오펜스 ENTER와 같은 경로), `DEMO_RESET`.
 
@@ -65,7 +67,8 @@ app/src/main/java/app/heyarca/drive/
   PleosBridge.kt     # Pleos SDK 5종 + CarUxRestrictions 연결
   CompanionBrain.kt  # 약속 판단: 브리핑, 음성 답장, 이름 보정, 도착 알림, 주차 정리
   PromiseStore.kt    # 약속/증거 저장
-  MainActivity.kt    # Compose UI (주행: 음성 전용 / 주차: 1탭 카드), Gleo 액션 처리
+  MainActivity.kt    # Compose UI (주행: 구체 + 한 줄 / 주차: 1탭 카드), Gleo 액션 처리
+  Orb.kt             # ARCA 구체: AGSL RuntimeShader(API 33+), 대기·듣기(STT RMS)·말하기(TTS)·발송 링 상태
 app/src/main/assets/schema.json   # Gleo App Schema
 scripts/                          # 에뮬레이터·시연 자동화
 ```
