@@ -26,7 +26,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -133,8 +132,8 @@ private fun Screen(app: ArcaDriveApp, brain: CompanionBrain) {
 @Composable
 private fun TopBar(car: CarState, driving: Boolean) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Image(painterResource(R.drawable.arca_labs_logo), null, Modifier.height(26.dp))
-        Spacer(Modifier.width(18.dp))
+        Text("ARCA", 26, FontWeight.Black, Bone, maxLines = 1, family = En)
+        Spacer(Modifier.width(12.dp))
         Text("Drive", 24, FontWeight.Bold, Ember, family = En)
         Spacer(Modifier.weight(1f))
         Pill(if (driving) "주행 중 · 음성 전용" else "주차 · 화면 열림", if (driving) Ember else Color(0xFF3B302A))
@@ -171,7 +170,7 @@ private fun DrivingPanel(car: CarState, closed: Int, open: Int) {
         Spacer(Modifier.height(10.dp))
         Text(car.destination ?: "목적지 없음", 46, FontWeight.ExtraBold, Bone, maxLines = 1)
         Spacer(Modifier.height(8.dp))
-        val eta = car.remainSec?.let { "${(it / 60).coerceAtLeast(0)}분" } ?: "경로 안내 중"
+        val eta = car.remainSec?.let { if (it < 90) "곧 도착" else "${it / 60}분" } ?: "경로 안내 중"
         val km = car.remainM?.let { String.format("%.1fkm", it / 1000.0) } ?: ""
         Text("$eta  $km", 40, FontWeight.Bold, Ember, family = En)
         Spacer(Modifier.height(40.dp))

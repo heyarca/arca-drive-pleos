@@ -3,11 +3,11 @@
 > 운전 중에 한 약속을 기억했다가, 핸들에서 손을 떼지 않아도 말 한마디로 처리해 주는 Pleos Connect 앱.
 > 기어 D에서는 화면을 닫고 음성으로만, P로 바꾸면 남은 일을 1탭으로 마무리합니다.
 
-현대자동차그룹 차량용 앱 개발 공모전 (Code your App into Pleos App Market 2026) 출품작 · Team Arca Labs
+현대자동차그룹 차량용 앱 개발 공모전 (Code your App into Pleos App Market 2026) 출품작
 
 ## APK
 
-- `apk/ArcaLabs_ARCADrive_release.apk` (release 빌드)
+- `apk/ArcaLabs_ARCADrive_release.apk` (release 빌드, v1.0.0, 서명됨)
 - 패키지: `app.heyarca.drive`
 
 ## 개발·테스트 환경
@@ -69,5 +69,3 @@ app/src/main/java/app/heyarca/drive/
 app/src/main/assets/schema.json   # Gleo App Schema
 scripts/                          # 에뮬레이터·시연 자동화
 ```
-
-© 2026 Arca Labs
