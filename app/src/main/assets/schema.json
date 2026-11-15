@@ -1,9 +1,72 @@
 {
-  "packageName": "app.heyarca.drive",
-  "appDescription": "A driving companion that remembers the promises the driver made and closes them by voice during the trip.",
-  "invokeWord": "아르카",
-  "version": "1.0.0",
+  "packageName": "app.mate.gleo",
+  "appDescription": "Mate lets the driver hand work to an agent on the driver's own cloud computer by voice while driving, then review and approve the result only while the car is stopped.",
+  "invokeWord": "메이트",
+  "version": "2.0.0",
   "actionCalls": [
+    {
+      "type": "function",
+      "function": {
+        "name": "DELEGATE_TASK",
+        "description": "Hand a piece of work to the agent on the driver's own cloud computer. The work runs there, not in the car. Returns a job id.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "task": {
+              "type": "string",
+              "description": "What the driver asked for, in the driver's own words."
+            },
+            "kind": {
+              "type": "string",
+              "enum": ["proposal", "edit", "bugfix"],
+              "description": "proposal: build a proposal page from the last meeting. edit: change the page that was just built. bugfix: fix a bug in the driver's code and publish a preview."
+            },
+            "requestId": {
+              "type": "string",
+              "description": "Idempotency key. A retry with the same requestId returns the same job."
+            }
+          },
+          "required": ["task"]
+        },
+        "component": "activity"
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "SHOW_RESULT",
+        "description": "Open the result of a finished job on the car screen. Refused while the car is moving.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "jobId": {
+              "type": "string",
+              "description": "The job to show. Defaults to the latest finished job."
+            }
+          },
+          "required": []
+        },
+        "component": "activity"
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "APPROVE_DEPLOY",
+        "description": "Approve deploying the fixed code that is waiting for approval. Refused unless the car is stopped (speed 0).",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "jobId": {
+              "type": "string",
+              "description": "The job to deploy. Defaults to the latest job waiting for approval."
+            }
+          },
+          "required": []
+        },
+        "component": "activity"
+      }
+    },
     {
       "type": "function",
       "function": {

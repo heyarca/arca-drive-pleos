@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Pleos Connect SDK permissions (only the domains ARCA Drive reads) -->
+    <!-- Pleos Connect SDK permissions (only the domains Mate reads) -->
     <uses-permission android:name="pleos.car.permission.CAR_DRIVE" />
     <uses-permission android:name="pleos.car.permission.CAR_ENERGY" />
     <uses-permission android:name="pleos.car.permission.NAVI_ROUTE" />
@@ -9,17 +9,20 @@
     <uses-permission android:name="pleos.car.permission.FUSED_LOCATION" />
     <uses-permission android:name="pleos.car.permission.STT_SERVICE" />
     <uses-permission android:name="pleos.car.permission.TTS_SERVICE" />
+    <!-- vehicle speed (moving vs. stopped) from the car's VHAL property PERF_VEHICLE_SPEED -->
+    <uses-permission android:name="android.car.permission.CAR_SPEED" />
     <uses-permission android:name="android.permission.INTERNET" />
 
     <uses-feature android:name="android.hardware.type.automotive" android:required="true" />
 
     <application
-        android:name=".ArcaDriveApp"
+        android:name=".MateApp"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
-        android:label="ARCA Drive"
+        android:label="메이트"
+        android:usesCleartextTraffic="true"
         android:supportsRtl="false"
-        android:theme="@style/Theme.ArcaDrive">
+        android:theme="@style/Theme.Mate">
 
         <activity
             android:name=".MainActivity"
@@ -43,6 +46,18 @@
             </intent-filter>
             <intent-filter>
                 <action android:name="SEND_ARRIVAL_UPDATE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="DELEGATE_TASK" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="SHOW_RESULT" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="APPROVE_DEPLOY" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>

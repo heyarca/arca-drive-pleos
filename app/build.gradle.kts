@@ -12,15 +12,15 @@ val signProps = Properties().apply {
 }
 
 android {
-    namespace = "app.heyarca.drive"
+    namespace = "app.mate.gleo"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "app.heyarca.drive"
+        applicationId = "app.mate.gleo"
         minSdk = 28
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.2.0"
+        versionCode = 4
+        versionName = "2.0.0"
     }
 
     signingConfigs {
@@ -58,6 +58,7 @@ dependencies {
     implementation("ai.pleos.playground:TextToSpeech:3.3.1")
     implementation("ai.pleos.playground:FusedLocation:1.1.3")
 
+    implementation("com.google.zxing:core:3.5.3")   // QR for "폰으로 이어 보기"
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity-compose:1.9.2")
     implementation(platform("androidx.compose:compose-bom:2024.09.03"))

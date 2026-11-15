@@ -1,0 +1,146 @@
+#cloud-config
+# 메이트 (Mate) per-subscriber VM bootstrap. Ubuntu 24.04 arm64.
+# Placeholders substituted by provision_user_vm.sh:
+#   __USER_ID__  __REPO_URL__  __REGION__  (and the placeholder domain vm.mate.example)
+# No secret lives in this file: the per-user token is pulled from SSM at boot.
+# No model API key anywhere: the subscriber logs the official agent CLI into their OWN AI subscription on this VM.
+
+package_update: true
+packages:
+  - python3
+  - python3-boto3   # used by mate-fetch-env (instance role credentials via IMDSv2)
+  - nodejs          # if the distro Node is too old for the claude CLI, switch to NodeSource
+  - npm
+  - git
+  - caddy
+  - ca-certificates
+
+users:
+  - name: mate
+    gecos: Mate job runner
+    homedir: /var/lib/mate      # home == data dir, so ~/.claude is writable under ProtectSystem=strict
+    shell: /usr/sbin/nologin
+    lock_passwd: true           # no password, no SSH key, no sudo
+
+write_files:
+  - path: /usr/local/sbin/mate-fetch-env
+    owner: root:root
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env python3
+      """Fetch the per-user token from SSM into /etc/mate/env (0600). The AI login is the subscriber's own (agent CLI login under /var/lib/mate)."""
+      import os
+      import boto3
+
+      USER_ID = "__USER_ID__"
+      REGION = "__REGION__"
+      ENV_PATH = "/etc/mate/env"
+
+      ssm = boto3.client("ssm", region_name=REGION)
+
+      def param(name):
+          value = ssm.get_parameter(
+              Name=f"/mate/users/{USER_ID}/{name}", WithDecryption=True
+          )["Parameter"]["Value"].strip()
+          if not value or any(c in value for c in "\r\n\"'\\ "):
+              raise SystemExit(f"refusing unsafe value for {name}")
+          return value
+
+      env = {
+          "MATE_PORT": "8790",
+          "MATE_BIND": "127.0.0.1",   # only Caddy (443) is reachable from outside
+          "MATE_DATA": "/var/lib/mate",
+          "MATE_USER": USER_ID,
+          "HOME": "/var/lib/mate",
+          "MATE_TOKEN": param("token"),
+      }
+
+      os.makedirs("/etc/mate", mode=0o700, exist_ok=True)
+      tmp = ENV_PATH + ".tmp"
+      fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+      with os.fdopen(fd, "w") as f:
+          for key, value in env.items():
+              f.write(f"{key}={value}\n")
+      os.chmod(tmp, 0o600)
+      os.replace(tmp, ENV_PATH)
+
+  - path: /etc/systemd/system/mate-env.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Mate: fetch per-user secrets from SSM into /etc/mate/env
+      Wants=network-online.target
+      After=network-online.target
+      Before=mate-server.service
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/local/sbin/mate-fetch-env
+      # (re)start the server once the env file exists, also after a late retry
+      ExecStartPost=/usr/bin/systemctl --no-block restart mate-server.service
+      Restart=on-failure
+      RestartSec=10
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/system/mate-server.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Mate job server (user __USER_ID__)
+      # Wants (not Requires): if the secrets are not in SSM yet, this unit keeps
+      # retrying until mate-env has written /etc/mate/env. It never starts without it.
+      Wants=mate-env.service
+      After=mate-env.service network-online.target
+      StartLimitIntervalSec=0
+
+      [Service]
+      User=mate
+      Group=mate
+      WorkingDirectory=/var/lib/mate
+      EnvironmentFile=/etc/mate/env
+      ExecStart=/usr/bin/python3 /opt/mate/server/mate_server.py
+      Restart=always
+      RestartSec=5
+      # hardening
+      NoNewPrivileges=true
+      ProtectSystem=strict
+      ReadWritePaths=/var/lib/mate
+      ProtectHome=true
+      PrivateTmp=true
+      PrivateDevices=true
+      ProtectKernelTunables=true
+      ProtectKernelModules=true
+      ProtectControlGroups=true
+      RestrictSUIDSGID=true
+      LockPersonality=true
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/caddy/Caddyfile
+    owner: root:root
+    permissions: "0644"
+    defer: true   # written after the caddy package is installed
+    content: |
+      # Automatic TLS. Only 443 is open, so the certificate is issued via TLS-ALPN-01.
+      __USER_ID__.vm.mate.example {
+          encode gzip
+          reverse_proxy 127.0.0.1:8790
+      }
+
+runcmd:
+  - install -d -m 0700 -o root -g root /etc/mate
+  - install -d -m 0700 -o mate -g mate /var/lib/mate
+  - git clone --depth 1 --branch mate "__REPO_URL__" /opt/mate
+  - chown -R root:root /opt/mate && chmod -R go-w /opt/mate   # code is read-only for the service user
+  - npm install -g @anthropic-ai/claude-code
+  - systemctl daemon-reload
+  - systemctl enable mate-env.service mate-server.service
+  - systemctl start --no-block mate-server.service
+  - systemctl enable caddy
+  - systemctl restart caddy
