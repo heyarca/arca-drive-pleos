@@ -15,5 +15,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "ARCADrive"
+rootProject.name = "Mate"
 include(":app")

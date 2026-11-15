@@ -1,0 +1,8 @@
+{
+  "name": "mate-phone-record",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "playwright-core": "^1.65.1"
+  }
+}

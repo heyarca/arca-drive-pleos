@@ -1,0 +1,14 @@
+@font-face { font-family: "Asta Sans"; src: url("/static/asta_sans.ttf"); font-weight: 300 800; }
+* { box-sizing: border-box; }
+body { margin: 0; background: #F7F8FA; color: #131417; font-family: "Asta Sans", sans-serif; }
+.wrap { max-width: 880px; margin: 0 auto; padding: 48px 32px 80px; }
+.tag { color: #3F4B81; font-weight: 600; font-size: 22px; margin: 0 0 8px; }
+h1 { font-size: 52px; margin: 0 0 28px; letter-spacing: -1px; }
+.cart { list-style: none; margin: 0; padding: 0; background: #fff; border-radius: 28px; }
+.cart li { display: flex; justify-content: space-between; padding: 28px 32px; font-size: 28px; border-bottom: 1px solid #EDEEF2; }
+.cart li:last-child { border-bottom: 0; }
+.total { display: flex; justify-content: space-between; padding: 28px 32px; font-size: 32px; }
+.pay { width: 100%; padding: 30px; border: 0; border-radius: 24px; background: #44464E; color: #fff; font: 700 32px "Asta Sans", sans-serif; }
+.pay:active { background: #313236; }
+.status { margin-top: 24px; padding: 24px 32px; border-radius: 20px; background: #EDEEF2; font-size: 26px; color: #6B6C6F; }
+.status.done { background: #E3F7EC; color: #027A41; font-weight: 700; }
