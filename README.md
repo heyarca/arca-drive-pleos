@@ -7,7 +7,7 @@
 
 ## APK
 
-- `apk/ArcaLabs_ARCADrive_release.apk` (release 빌드, v1.1.0, 서명됨)
+- `apk/ArcaLabs_ARCADrive_release.apk` (release 빌드, v1.2.0, 서명됨)
 - 패키지: `app.heyarca.drive`
 
 ## 개발·테스트 환경
@@ -48,7 +48,7 @@ Android Automotive `CarUxRestrictionsManager`도 함께 확인해, 주행 제한
 1. Pleos Playground 개발 문서대로 Pleos Connect 에뮬레이터를 실행합니다.
 2. `adb install -r -g apk/ArcaLabs_ARCADrive_release.apk`
 3. 앱 실행: `adb shell am start -n app.heyarca.drive/.MainActivity` (또는 앱 목록의 ARCA Drive)
-4. Virtual Console(에뮬레이터 차량 제어)에서 기어를 D로 바꾸면 ARCA가 먼저 브리핑합니다. 가운데 구체(ARCA)를 누르면 마이크(STT)로 말할 수 있습니다.
+4. Virtual Console(에뮬레이터 차량 제어)에서 기어를 D로 바꾸면 ARCA가 먼저 브리핑합니다. 가운데 구체를 누르면 마이크(STT)로 말할 수 있습니다.
 
 ### 시연 시나리오 자동 재현
 
@@ -87,7 +87,7 @@ app/src/main/java/app/heyarca/drive/
   CompanionBrain.kt  # 약속 판단: 브리핑, 음성 답장, 이름 보정, 도착 알림, 주차 정리
   PromiseStore.kt    # 약속/증거 저장
   MainActivity.kt    # Compose UI (주행: 구체 + 한 줄 / 주차: 1탭 카드), Gleo 액션 처리
-  Orb.kt             # ARCA 구체: AGSL RuntimeShader(API 33+), 대기·듣기(STT RMS)·말하기(TTS)·발송 링 상태
+  Orb.kt             # 남색 구체(현대 CI Hyundai Blue #002C5F 계열): AGSL RuntimeShader(API 33+), 대기·듣기(STT RMS)·생각 중(인식~응답 사이 맥동·흐름)·말하기(TTS)·발송 링 상태
 app/src/main/assets/schema.json   # Gleo App Schema
 scripts/                          # 에뮬레이터·시연 자동화
 ```

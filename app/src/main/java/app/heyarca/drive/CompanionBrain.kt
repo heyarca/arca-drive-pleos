@@ -31,11 +31,19 @@ class CompanionBrain(private val store: PromiseStore, private val pleos: PleosBr
         pleos.onArrived = { name -> onArrived(name) }
     }
 
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /** A short visible "thinking" beat (orb THINKING) before every answer, then the line + TTS. */
     private fun speak(display: String, voice: String = display) {
-        line.value = display
-        pleos.say(voice)
+        pleos.think(true)
         log.value = (log.value + "ARCA: $voice").takeLast(30)
+        main.postDelayed({
+            line.value = display
+            pleos.say(voice)
+        }, THINK_MS)
     }
+
+    companion object { const val THINK_MS = 900L }
 
     // 1) Gear P -> D : brief only what has to close during this trip, by voice.
     private fun onGear(g: String) {

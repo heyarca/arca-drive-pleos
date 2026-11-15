@@ -68,6 +68,15 @@ class PleosBridge(private val ctx: Context) {
     val heard = MutableStateFlow("")          // latest STT text
     val speaking = MutableStateFlow(false)
     val listening = MutableStateFlow(false)   // STT recognition in progress (orb LISTENING state)
+    val thinking = MutableStateFlow(false)    // driver finished talking, answer not spoken yet (orb THINKING state)
+    private val mainH = android.os.Handler(android.os.Looper.getMainLooper())
+    private val thinkReset = Runnable { thinking.value = false }
+    /** THINKING never sticks: it ends with the next say() or after 8 s. */
+    fun think(on: Boolean) {
+        mainH.removeCallbacks(thinkReset)
+        thinking.value = on
+        if (on) mainH.postDelayed(thinkReset, 8000L)
+    }
     val level = MutableStateFlow(0.0)         // mic / voice level for the orb
 
     var onUtterance: ((String) -> Unit)? = null
@@ -274,13 +283,13 @@ class PleosBridge(private val ctx: Context) {
     private val sttListener = object : ResultListener {
         override fun onUpdated(p0: String, p1: Boolean) {
             heard.value = p0
-            if (p1) { listening.value = false; level.value = 0.0; Log.i(TAG, "HEARD: $p0") }
+            if (p1) { listening.value = false; think(p0.isNotBlank()); level.value = 0.0; Log.i(TAG, "HEARD: $p0") }
             if (p1 && p0.isNotBlank()) onUtterance?.invoke(p0)
         }
         override fun onUpdatedEpdData(p0: Long, p1: Long) {}
         override fun onStartedRecognition() { listening.value = true; mark { copy(stt = "OK · listening") } }
-        override fun onEndedRecognition() { listening.value = false; mark { copy(stt = "OK · on-device ko-KR") }; level.value = 0.0 }
-        override fun onError(p0: SttError) { listening.value = false; mark { copy(stt = "ERR $p0") } }
+        override fun onEndedRecognition() { if (listening.value) think(true); listening.value = false; mark { copy(stt = "OK · on-device ko-KR") }; level.value = 0.0 }
+        override fun onError(p0: SttError) { listening.value = false; think(false); mark { copy(stt = "ERR $p0") } }
         override fun onReady() {}
         override fun onUpdatedRms(p0: Double) { level.value = p0 }
     }
@@ -304,6 +313,8 @@ class PleosBridge(private val ctx: Context) {
                 }
                 stt?.completeAudioSend()
                 level.value = 0.0
+                think(true)
+                Log.i(TAG, "THINK start")
             }
         }.start()
     }
@@ -337,6 +348,7 @@ class PleosBridge(private val ctx: Context) {
 
     fun say(text: String) {
         Log.i(TAG, "SAY: $text")
+        think(false)
         // orb SPEAKING state: from the TTS onStart/onDone callbacks; if the platform gives none
         // (e.g. an emulator without an audio device), fall back to an estimate from the text length.
         speaking.value = true
