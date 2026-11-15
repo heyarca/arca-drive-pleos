@@ -1,222 +1,299 @@
 package app.heyarca.drive
 
-import android.graphics.RuntimeShader
-import android.os.Build
-import androidx.annotation.RequiresApi
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.StrokeCap
-import kotlinx.coroutines.launch
-import kotlin.math.sin
-
-/** What the orb is doing. Driven by real SDK state: STT recognition, (thinking), TTS playback, outbox sends. */
-enum class OrbMode { IDLE, LISTENING, THINKING, SPEAKING }
-
-// Hyundai Motor CI colours (hyundai.com/kr/ko/info/ci/ci-color)
-private val HyundaiBlue = Color(0xFF002C5F)
-private val ActiveBlue = Color(0xFF00AAD2)
-private val SkyBlue = Color(0xFFAACAE6)
+import kotlin.math.*
 
 /**
- * A navy "thinking" orb.
- *  - IDLE: deep Hyundai Blue sphere, slow breathing (5 s), slow inner current.
- *  - LISTENING: a sky-blue halo that follows the mic RMS from SpeechToText.
- *  - THINKING: (between the driver's last word and the answer) the inner current speeds up,
- *    a soft light band sweeps around the rim and the body pulses ~1.6 Hz.
- *  - SPEAKING: the body swells with the TTS RMS.
- *  - sent: [sentCount] increments -> one soft ring rolls outward and fades (no flashing).
- * API 33+ uses an AGSL RuntimeShader; older platforms fall back to layered radial gradients.
+ * The assistant's presence: a dotted 3D "thinking orb" in Hyundai navy.
+ *
+ * Geometry is a Kotlin port of the MIT-licensed `thinking-orbs` engine (Jakub Antalik,
+ * github.com/Jakubantalik/Libraries.dev, packages/thinking-orbs): rotated, depth-shaded,
+ * z-sorted dots, depth carried by dot size and ink weight alone. Each assistant state maps
+ * to one of the library's modes:
+ *   IDLE      -> wave    ("listening" geometry at low amplitude) a slowly breathing dotted sphere
+ *   LISTENING -> wave    a waveform rolls through the rings, amplitude follows the mic RMS
+ *   SPEAKING  -> wave    faster, amplitude follows the voice
+ *   THINKING  -> globe   ("searching")   a scan meridian sweeps the sphere
+ *   WORKING   -> orbits  ("working")     particles on tilted orbits (background jobs)
  */
+enum class OrbMode { IDLE, LISTENING, THINKING, WORKING, SPEAKING }
+
+/** Hyundai navy (#002C5F) is the ink; far dots fade toward the paper. */
+private const val TINT_R = 0f
+private const val TINT_G = 44f
+private const val TINT_B = 95f
+
 @Composable
-fun LivingOrb(mode: OrbMode, level: Float, sentCount: Int, calm: Boolean, modifier: Modifier = Modifier) {
-    var t by remember { mutableFloatStateOf(0f) }
+fun ThinkingOrb(mode: OrbMode, level: Float, calm: Boolean, modifier: Modifier = Modifier) {
+    // one clock per mode, advanced at that mode's own speed, so speed changes never jump
+    val clocks = remember { FloatArray(OrbMode.values().size) }
+    var tick by remember { mutableIntStateOf(0) }
+    val lvl by animateFloatAsState(level.coerceIn(0f, 1f), spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessLow), label = "lvl")
+    val pace = if (calm) 0.8f else 1f
+
+    // cross-fade between modes (old mode fades out while the new one fades in)
+    var shown by remember { mutableStateOf(mode) }
+    var previous by remember { mutableStateOf<OrbMode?>(null) }
+    val mix = remember { Animatable(1f) }
+    LaunchedEffect(mode) {
+        if (mode != shown) {
+            previous = shown; shown = mode
+            mix.snapTo(0f); mix.animateTo(1f, tween(650))
+            previous = null
+        }
+    }
+
     LaunchedEffect(Unit) {
         var last = 0L
         while (true) {
-            withFrameNanos { n -> if (last != 0L) t += ((n - last) / 1e9f).coerceAtMost(0.05f); last = n }
+            withFrameNanos { n ->
+                if (last != 0L) {
+                    val dt = ((n - last) / 1e9f).coerceAtMost(0.05f) * pace
+                    OrbMode.values().forEach { m -> clocks[m.ordinal] += dt * speedOf(m) }
+                }
+                last = n; tick++
+            }
         }
     }
-    val listen by animateFloatAsState(if (mode == OrbMode.LISTENING) 1f else 0f, spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessVeryLow), label = "listen")
-    val think by animateFloatAsState(if (mode == OrbMode.THINKING) 1f else 0f, spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessLow), label = "think")
-    val speak by animateFloatAsState(if (mode == OrbMode.SPEAKING) 1f else 0f, spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessVeryLow), label = "speak")
-    val lvl by animateFloatAsState(level.coerceIn(0f, 1f), spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessLow), label = "lvl")
-    val synth = if (mode == OrbMode.SPEAKING) (0.35f + 0.25f * sin(t * 5.1f) + 0.2f * sin(t * 8.3f + 1.3f)).coerceIn(0f, 1f) else 0f
-    val energy = maxOf(lvl, synth * speak)
-    val pace = if (calm) 0.7f else 1f
 
-    val ring = remember { Animatable(1f) }
-    var seen by remember { mutableIntStateOf(sentCount) }
-    val scope = rememberCoroutineScope()
-    LaunchedEffect(sentCount) {
-        if (sentCount > seen) scope.launch { ring.snapTo(0f); ring.animateTo(1f, tween(2200, easing = FastOutSlowInEasing)) }
-        seen = sentCount
-    }
-
-    Box(modifier) {
-        if (Build.VERSION.SDK_INT >= 33) ShaderOrb(t * pace, t, energy, listen, think, speak) else FallbackOrb(t * pace, t, energy, listen, think)
-        Canvas(Modifier.fillMaxSize()) { drawRing(ring.value) }
+    val buf = remember { OrbBuf() }
+    Canvas(modifier) {
+        tick.let { }   // read the frame tick so the canvas redraws every frame
+        val p = previous
+        if (p != null) drawMode(buf, p, clocks[p.ordinal], lvl, 1f - mix.value)
+        drawMode(buf, shown, clocks[shown.ordinal], lvl, if (p != null) mix.value else 1f)
     }
 }
 
-private fun DrawScope.drawRing(p: Float) {
-    if (p >= 1f) return
-    val base = size.minDimension * 0.28f
-    val r = base + (size.minDimension * 0.5f - base) * p
-    val a = (1f - p) * (1f - p) * 0.55f
-    val w = 0.10f + 0.12f * p
-    drawCircle(
-        Brush.radialGradient(
-            0f to Color.Transparent,
-            (1f - w).coerceIn(0f, 1f) to Color.Transparent,
-            (1f - w / 2f) to SkyBlue.copy(alpha = a),
-            1f to Color.Transparent,
-            center = center, radius = r,
-        ),
-        radius = r,
-    )
+/** Seconds of geometry time per real second. Library presets are tuned for tiny spinners; a hero orb in a car runs calmer. */
+private fun speedOf(m: OrbMode) = when (m) {
+    OrbMode.IDLE -> 0.9f
+    OrbMode.SPEAKING -> 1.7f
+    OrbMode.LISTENING -> 2.0f
+    OrbMode.THINKING -> 0.95f
+    OrbMode.WORKING -> 1.1f
 }
 
-private const val ORB_AGSL = """
-uniform float2 res;
-uniform float t;
-uniform float tr;
-uniform float energy;
-uniform float listen;
-uniform float think;
-uniform float speak;
-
-float hash(float2 p) {
-    p = fract(p * float2(123.34, 456.21));
-    p += dot(p, p + 45.32);
-    return fract(p.x * p.y);
-}
-float noise(float2 p) {
-    float2 i = floor(p);
-    float2 f = fract(p);
-    float2 u = f * f * (3.0 - 2.0 * f);
-    return mix(mix(hash(i), hash(i + float2(1.0, 0.0)), u.x),
-               mix(hash(i + float2(0.0, 1.0)), hash(i + float2(1.0, 1.0)), u.x), u.y);
-}
-float fbm(float2 p) {
-    float v = 0.0;
-    float a = 0.5;
-    for (int i = 0; i < 4; i++) {
-        v += a * noise(p);
-        p = p * 2.03 + float2(1.7, 9.2);
-        a *= 0.5;
+private fun DrawScope.drawMode(b: OrbBuf, m: OrbMode, t: Float, level: Float, alpha: Float) {
+    if (alpha <= 0.01f) return
+    val s = size.minDimension
+    b.clear()
+    when (m) {
+        OrbMode.IDLE -> OrbGeo.wave(b, s, t, amp = 0.32f)
+        OrbMode.SPEAKING -> OrbGeo.wave(b, s, t, amp = 0.5f + 0.3f * level)
+        OrbMode.LISTENING -> OrbGeo.wave(b, s, t, amp = 0.6f + 0.3f * level)
+        OrbMode.THINKING -> OrbGeo.globe(b, s, t)
+        OrbMode.WORKING -> OrbGeo.orbits(b, s, t)
     }
-    return v;
-}
-float blob(float2 s, float2 c, float rad) {
-    float2 d = s - c;
-    return exp(-dot(d, d) / (rad * rad));
-}
-
-// Deep Hyundai Blue glass sphere with cool light currents (Active Blue / Sky Blue) inside.
-// THINKING: faster current, a light band sweeping around the rim, a quick pulse.
-half4 main(float2 fc) {
-    float s = 0.5 * min(res.x, res.y);
-    float2 uv = (fc - 0.5 * res) / s;
-    float r = length(uv);
-
-    float pulse = 0.5 + 0.5 * sin(tr * 10.0);
-    float R = 0.50 * (1.0 + 0.035 * sin(t * 1.25) + 0.07 * energy + 0.02 * speak + 0.03 * think * pulse);
-
-    float d0 = max(r - R, 0.0);
-    float g = exp(-d0 * 10.0) * (0.42 + 0.25 * energy + 0.18 * think * pulse) + exp(-d0 * 3.5) * (0.14 + 0.12 * energy + 0.06 * think);
-    float halo = exp(-d0 * 5.0) * listen * (0.22 + 0.30 * energy);
-    float edge = smoothstep(1.0, 0.72, r);
-    g *= edge; halo *= edge;
-    float3 outCol = float3(0.02, 0.20, 0.42) * g + float3(0.55, 0.75, 0.92) * halo;
-    float outA = clamp(g + halo, 0.0, 1.0);
-
-    float2 p = uv / R;
-    float d = length(p);
-    if (d >= 1.02) return half4(half3(outCol), half(outA));
-
-    float z = sqrt(clamp(1.0 - d * d, 0.0, 1.0));
-    float2 q = p * (1.0 + 0.35 * (1.0 - z));
-    float sp = 0.06 + 0.10 * speak + 0.05 * energy + 0.30 * think;
-    float2 w = float2(fbm(q * 1.4 + float2(t * sp, 0.0)), fbm(q * 1.4 + float2(3.1, 3.1 - t * sp)));
-    float2 sw = p + (0.18 + 0.10 * think) * (w - 0.5);
-
-    float sp2 = 0.22 + 0.25 * speak + 0.55 * think;
-    float b1 = blob(sw, float2(0.40 * sin(t * sp2 * 0.9), 0.36 * cos(t * sp2 * 0.7)), 0.70);
-    float b2 = blob(sw, float2(0.42 * sin(t * sp2 * 0.6 + 2.1), 0.38 * sin(t * sp2 * 0.8 + 0.4)), 0.66);
-    float b3 = blob(sw, float2(0.38 * cos(t * sp2 * 0.5 + 4.0), 0.40 * sin(t * sp2 * 0.55 + 3.0)), 0.62);
-
-    float k = 0.85 + 0.5 * energy + 0.35 * think * pulse;
-    // body: Hyundai Blue #002C5F, a touch lighter towards the centre
-    float3 col = float3(0.0, 0.172, 0.373) * (0.62 + 0.28 * z);
-    col += k * (float3(0.0, 0.05, 0.09) * b1 + float3(0.04, 0.07, 0.11) * b2 + float3(0.0, 0.03, 0.07) * b3);
-
-    // thinking: a light band orbiting the rim
-    float ang = atan(p.y, p.x);
-    float sweep = pow(0.5 + 0.5 * cos(ang - tr * 3.2), 10.0);
-    float band = smoothstep(0.55, 0.95, d) * sweep * think;
-    col += float3(0.45, 0.70, 0.90) * band * 0.6;
-
-    float fres = pow(1.0 - z, 3.0);
-    col += float3(0.10, 0.26, 0.42) * fres * (1.0 + 0.6 * listen + 0.5 * think);
-    col += float3(0.12, 0.18, 0.26) * pow(z, 3.0) * (0.25 + 0.9 * energy + 0.4 * think * pulse);
-    col /= max(max(col.r, max(col.g, col.b)), 1.0);
-
-    float a = smoothstep(1.02, 0.90, d);
-    float3 c = col * a + outCol * (1.0 - a);
-    return half4(half3(c), half(a + outA * (1.0 - a)));
-}
-"""
-
-@RequiresApi(33)
-@Composable
-private fun ShaderOrb(t: Float, tr: Float, energy: Float, listen: Float, think: Float, speak: Float) {
-    val shader = remember { RuntimeShader(ORB_AGSL) }
-    val brush = remember(shader) { ShaderBrush(shader) }
-    Canvas(Modifier.fillMaxSize()) {
-        shader.setFloatUniform("res", size.width, size.height)
-        shader.setFloatUniform("t", t)
-        shader.setFloatUniform("tr", tr)
-        shader.setFloatUniform("energy", energy)
-        shader.setFloatUniform("listen", listen)
-        shader.setFloatUniform("think", think)
-        shader.setFloatUniform("speak", speak)
-        drawRect(brush)
+    val ox = (size.width - s) / 2f; val oy = (size.height - s) / 2f
+    val n = b.sortByDepth()
+    for (k in 0 until n) {
+        val i = b.order(k)
+        val w = b.w[i].coerceIn(0f, 1f)
+        val a = (b.a[i] * alpha).coerceIn(0f, 1f)
+        if (a < 0.02f) continue
+        val c = Color(
+            (TINT_R + (255f - TINT_R) * w) / 255f,
+            (TINT_G + (255f - TINT_G) * w) / 255f,
+            (TINT_B + (255f - TINT_B) * w) / 255f, a,
+        )
+        drawCircle(c, b.r[i], Offset(ox + b.x[i], oy + b.y[i]))
     }
 }
 
-@Composable
-private fun FallbackOrb(t: Float, tr: Float, energy: Float, listen: Float, think: Float) {
-    Canvas(Modifier.fillMaxSize()) {
-        val s = size.minDimension / 2
-        val pulse = 0.5f + 0.5f * sin(tr * 10f)
-        val R = s * 0.5f * (1f + 0.035f * sin(t * 1.25f) + 0.07f * energy + 0.03f * think * pulse)
-        drawCircle(Brush.radialGradient(listOf(ActiveBlue.copy(alpha = 0.22f + 0.2f * energy + 0.15f * listen), ActiveBlue.copy(alpha = 0.05f), Color.Transparent), center, s), s)
-        drawCircle(HyundaiBlue, R)
-        val sp = 0.22f + 0.55f * think
-        listOf(Triple(ActiveBlue, 0f, 0.70f), Triple(SkyBlue, 2.1f, 0.66f), Triple(Color(0xFF1E5A96), 4.0f, 0.62f)).forEach { (c, ph, rad) ->
-            val o = center + Offset(R * 0.4f * sin(t * sp * 0.8f + ph), R * 0.38f * sin(t * sp * 0.7f + ph + 0.5f))
-            drawCircle(Brush.radialGradient(listOf(c.copy(alpha = 0.35f + 0.2f * energy), Color.Transparent), o, R * rad), R, center)
+/** Flat, allocation-free dot buffer (one frame). */
+class OrbBuf(cap: Int = 6000) {
+    val x = FloatArray(cap); val y = FloatArray(cap); val z = FloatArray(cap)
+    val r = FloatArray(cap); val w = FloatArray(cap); val a = FloatArray(cap)
+    private val keys = LongArray(cap)
+    var n = 0; private set
+    fun clear() { n = 0 }
+    fun add(px: Float, py: Float, pz: Float, pr: Float, white: Float, alpha: Float = 1f, rMin: Float = 0.3f) {
+        if (n >= x.size || alpha < 0.02f) return
+        x[n] = px; y[n] = py; z[n] = pz; r[n] = max(rMin, pr); w[n] = white; a[n] = alpha; n++
+    }
+    /** z-sort far -> near (painter's order) with a primitive sort: quantised depth in the high bits, index in the low bits. */
+    fun sortByDepth(): Int {
+        for (i in 0 until n) keys[i] = ((z[i] * 64f).toLong() + (1L shl 30) shl 20) or i.toLong()
+        java.util.Arrays.sort(keys, 0, n)
+        return n
+    }
+    fun order(k: Int) = (keys[k] and 0xFFFFF).toInt()
+}
+
+/** Geometry (pure math over size, t). Faithful to thinking-orbs/src/engine. */
+object OrbGeo {
+    private fun hashD(a: Double, b: Double): Double { val h = sin(a * 12.9898 + b * 78.233) * 43758.5453; return h - floor(h) }
+    private fun angleDelta(a: Double, b: Double) = atan2(sin(a - b), cos(a - b))
+    private fun rScale(size: Float) = (size / 300f).pow(0.6f)
+
+    private class Proj(yaw: Double, tilt: Double, val cx: Double, val cy: Double, val scale: Double) {
+        val st = sin(tilt); val ct = cos(tilt); val sy = sin(yaw); val cyw = cos(yaw)
+        var px = 0.0; var py = 0.0; var pz = 0.0
+        fun p(x: Double, y: Double, z: Double) {
+            val x1 = x * cyw + z * sy
+            val z1 = -x * sy + z * cyw
+            val y1 = y * ct - z1 * st
+            val z2 = y * st + z1 * ct
+            px = cx + x1 * scale; py = cy - y1 * scale; pz = z2
         }
-        drawCircle(Brush.radialGradient(0.7f to Color.Transparent, 1f to SkyBlue.copy(alpha = 0.35f + 0.2f * listen), center = center, radius = R), R)
-        if (think > 0.01f) {
-            val start = (tr * 3.2f * 57.2958f) % 360f
-            drawArc(SkyBlue.copy(alpha = 0.6f * think), start, 70f, false, topLeft = center - Offset(R * 0.92f, R * 0.92f),
-                size = androidx.compose.ui.geometry.Size(R * 1.84f, R * 1.84f), style = Stroke(width = R * 0.05f, cap = StrokeCap.Round))
+    }
+
+    private fun fib(i: Int, n: Int, out: DoubleArray) {
+        val golden = PI * (3 - sqrt(5.0))
+        val y = 1 - (2 * (i + 0.5)) / n
+        val rad = sqrt(1 - y * y)
+        val a = i * golden
+        out[0] = rad * cos(a); out[1] = y; out[2] = rad * sin(a)
+    }
+
+    /** "breathing" (ribbon engine, faceOn): a face-on band whose radius undulates. 11 lanes (64 px preset) x 72 segs. */
+    fun ring(b: OrbBuf, size: Float, t: Float, wobMul: Float, lanesIn: Int = 11, segs: Int = 72, rBase: Float = 1.05f, rDepth: Float = 1.63f) {
+        val cx = size / 2.0; val cy = size / 2.0
+        val R = size / 2.0 * 0.78
+        val camTilt = 0.3
+        val pt = Proj(0.0, camTilt, cx, cy, 1.0)    // spin 0 (preset)
+        val rs = rScale(size)
+        val ya = 0.0
+        val ta = -camTilt
+        val ux = cos(ya); val uy = 0.0; val uz = sin(ya)
+        val vx = -uz * sin(ta); val vy = cos(ta); val vz = ux * sin(ta)
+        val nx = uy * vz - uz * vy; val ny = uz * vx - ux * vz; val nz = ux * vy - uy * vx
+        val wobAmp = 0.23 * wobMul
+        val baseR = R / (1 + 0.85 * wobAmp)
+        val lanes = max(1, lanesIn)
+        for (w in 0 until lanes) {
+            val laneOff = (w - (lanes - 1) / 2.0) * 0.075
+            val edge = abs(w - (lanes - 1) / 2.0) / max(1.0, (lanes - 1) / 2.0)
+            for (k in 0 until segs) {
+                val a = k.toDouble() / segs * 2 * PI
+                val wob = (0.16 * sin(a * 3 - t * 1.7 + w * 0.22) + 0.07 * sin(a * 5 + t * 1.1)) * wobMul
+                val radial = 1 + wob
+                val x = ux * cos(a) + vx * sin(a) + nx * laneOff
+                val y = uy * cos(a) + vy * sin(a) + ny * laneOff
+                val z = uz * cos(a) + vz * sin(a) + nz * laneOff
+                val l = sqrt(x * x + y * y + z * z)
+                val rr = baseR * radial
+                pt.p(x / l * rr, y / l * rr, z / l * rr)
+                val depth = (pt.pz / R + 1) / 2
+                b.add(pt.px.toFloat(), pt.py.toFloat(), pt.pz.toFloat(),
+                    ((rBase + rDepth * depth) * (1 - 0.25 * edge) * rs).toFloat(),
+                    (0.52 - 0.44 * depth + 0.18 * edge).toFloat(), (0.4 + 0.6 * depth).toFloat())
+            }
+        }
+    }
+
+    /** "listening": a waveform rolls through a lat/long sphere. */
+    fun wave(b: OrbBuf, size: Float, t: Float, amp: Float = 1f, rings: Int = 15, lonDensity: Int = 40, rBase: Float = 0.6f, rDepth: Float = 1.7f) {
+        val cx = size / 2.0; val cy = size / 2.0
+        val R = size / 2.0 * 0.874
+        val pt = Proj(t * 0.18, 0.38, cx, cy, 1.0)
+        val rs = rScale(size)
+        for (ri in 0..rings) {
+            val lat = -PI / 2 + ri.toDouble() / rings * PI
+            val cosLat = cos(lat); val sinLat = sin(lat)
+            val w = (0.62 * sin(t * 2.1 - ri * 0.52) + 0.38 * sin(t * 1.27 + ri * 0.83)) * amp
+            val rr = R * (0.88 + 0.08 * w)
+            val lonCount = max(1, (abs(cosLat) * lonDensity).roundToInt())
+            for (lj in 0 until lonCount) {
+                val lon = lj.toDouble() / lonCount * 2 * PI
+                pt.p(cosLat * cos(lon) * rr, sinLat * rr, cosLat * sin(lon) * rr)
+                val depth = (pt.pz / R + 1) / 2
+                val crest = max(0.0, w)
+                b.add(pt.px.toFloat(), pt.py.toFloat(), pt.pz.toFloat(),
+                    ((rBase + rDepth * depth) * (1 + 0.4 * crest) * rs).toFloat(),
+                    (0.66 - 0.56 * depth - 0.1 * crest).toFloat())
+            }
+        }
+    }
+
+    /** "searching": lat/long field, a scan meridian sweeps across (scanMul/dimBase from the 64 px preset). */
+    fun globe(b: OrbBuf, size: Float, t: Float, latRings: Int = 17, lonDensity: Int = 44, scanMul: Double = 1.6, dimBase: Double = 0.45) {
+        val spin = 0.5
+        val cx = size / 2.0; val cy = size / 2.0
+        val radius = size / 2.0 * 0.82
+        val tilt = 0.4 + 0.06 * sin(t * 0.35)
+        val pt = Proj(t * spin, tilt, cx, cy, radius)
+        val scan = t * (spin + (1.7 - spin) * scanMul)
+        val rs = rScale(size)
+        for (li in 0..latRings) {
+            val lat = -PI / 2 + li.toDouble() / latRings * PI
+            val cosLat = cos(lat); val sinLat = sin(lat)
+            val lonCount = max(1, (abs(cosLat) * lonDensity).roundToInt())
+            for (lj in 0 until lonCount) {
+                val lon = lj.toDouble() / lonCount * 2 * PI
+                pt.p(cosLat * cos(lon), sinLat, cosLat * sin(lon))
+                val z = pt.pz
+                val depth = (z + 1) / 2
+                val d = angleDelta(lon + t * spin, scan)
+                val boost = exp(-(d * d) / 0.18) * max(0.0, z)
+                b.add(pt.px.toFloat(), pt.py.toFloat(), z.toFloat(),
+                    ((0.6 + 1.7 * depth + 1.0 * boost) * rs).toFloat(),
+                    (0.62 - 0.54 * depth).toFloat(),
+                    (dimBase + (1 - dimBase) * min(1.0, boost)).toFloat())
+            }
+        }
+    }
+
+    /** "working": the library's orbits mode, tuned for a hero orb — a ghosted dotted sphere as the core,
+     *  3 tilted rings drawn as faint dotted paths, and 2 bright particles per ring with fading comet tails. */
+    fun orbits(b: OrbBuf, size: Float, t: Float, progress: Float = 0f) {
+        // ghost core (globe geometry at low ink)
+        val cx = size / 2.0; val cy = size / 2.0
+        val R = size / 2.0 * 0.82
+        val rs = rScale(size)
+        val core = Proj(t * 0.25, 0.4, cx, cy, R * 0.62)
+        val latRings = 13; val lonDensity = 30
+        for (li in 0..latRings) {
+            val lat = -PI / 2 + li.toDouble() / latRings * PI
+            val cosLat = cos(lat); val sinLat = sin(lat)
+            val lonCount = max(1, (abs(cosLat) * lonDensity).roundToInt())
+            for (lj in 0 until lonCount) {
+                val lon = lj.toDouble() / lonCount * 2 * PI
+                core.p(cosLat * cos(lon), sinLat, cosLat * sin(lon))
+                val depth = (core.pz + 1) / 2
+                b.add(core.px.toFloat(), core.py.toFloat(), (core.pz * 0.6).toFloat(), ((0.5 + 1.2 * depth) * rs).toFloat(), (0.66 - 0.5 * depth).toFloat(), (0.35 + 0.4 * depth).toFloat())
+            }
+        }
+        val pt = Proj(t * 0.12, 0.3, cx, cy, 1.0)
+        val tilts = doubleArrayOf(0.35, 1.15, 2.05)
+        for ((ri, th) in tilts.withIndex()) {
+            val ro = R * (0.86 + 0.06 * ri)
+            val phi = 1.05 + 0.25 * ri
+            val nx = sin(phi) * cos(th); val ny = cos(phi); val nz = sin(phi) * sin(th)
+            var ux = -ny; var uy = nx; val uz = 0.0
+            val ul = max(1e-6, sqrt(ux * ux + uy * uy)); ux /= ul; uy /= ul
+            val vx = ny * uz - nz * uy; val vy = nz * ux - nx * uz; val vz = nx * uy - ny * ux
+            val speed = 0.55 + 0.18 * ri
+            val ghostN = 90
+            for (k in 0 until ghostN) {
+                val a = k.toDouble() / ghostN * 2 * PI
+                pt.p((ux * cos(a) + vx * sin(a)) * ro, (uy * cos(a) + vy * sin(a)) * ro, (uz * cos(a) + vz * sin(a)) * ro)
+                val depth = (pt.pz / ro + 1) / 2
+                b.add(pt.px.toFloat(), pt.py.toFloat(), pt.pz.toFloat(), (0.9 * rs).toFloat(), 0.62f, (0.32 + 0.38 * depth).toFloat())
+            }
+            for (m in 0 until 2) {
+                val head = t * speed + m * PI + ri * 2.1
+                for (j in 0 until 18) {          // comet tail: newest first
+                    val a = head - j * 0.035
+                    pt.p((ux * cos(a) + vx * sin(a)) * ro, (uy * cos(a) + vy * sin(a)) * ro, (uz * cos(a) + vz * sin(a)) * ro)
+                    val depth = (pt.pz / ro + 1) / 2
+                    val fade = 1.0 - j / 18.0
+                    b.add(pt.px.toFloat(), pt.py.toFloat(), (pt.pz + 0.01 * (18 - j)).toFloat(),
+                        ((0.9 + 1.2 * depth) * (0.55 + 0.45 * fade) * rs).toFloat(),
+                        (0.36 - 0.26 * depth).toFloat(), (fade * fade).toFloat())
+                }
+            }
         }
     }
 }

@@ -18,7 +18,7 @@ class ArcaDriveApp : Application() {
         super.onCreate()
         store = PromiseStore(this)
         pleos = PleosBridge(this)
-        brain = CompanionBrain(store, pleos)
+        brain = CompanionBrain(this, store, pleos)
         pleos.start()
         val f = IntentFilter().apply { DEMO_ACTIONS.forEach { addAction(it) } }
         registerReceiver(demo, f, RECEIVER_EXPORTED)
@@ -33,7 +33,14 @@ class ArcaDriveApp : Application() {
                     runCatching { assets.open("demo/$n.pcm").use { it.readBytes() } }.getOrNull()?.let { pleos.listenPcm(it) }
                 }
                 ACTION_NEAR -> brain.onNear()
-                ACTION_RESET -> { store.resetDemo(); store.outbox.value = emptyList(); brain.refreshCards(); brain.line.value = ""; pleos.heard.value = "" }
+                ACTION_RESET -> { android.util.Log.i(PleosBridge.TAG, "RESET demo data"); store.resetDemo(); store.outbox.value = emptyList(); brain.resetTasks(); brain.refreshCards(); brain.line.value = ""; pleos.heard.value = "" }
+                ACTION_TASK -> when (i.getStringExtra("name")) {   // same entry points the STT intents call
+                    "meeting" -> brain.delegateMeeting()
+                    "reel" -> brain.delegateReel()
+                    "confirm" -> brain.confirmTask("meeting")
+                    "play" -> brain.playing.value = true
+                    "close" -> brain.playing.value = false
+                }
                 ACTION_DEST -> pleos.setDestination(
                     (i.getStringExtra("name") ?: "양재 미팅룸").replace('_', ' '), i.getDoubleExtra("lat", 37.4688), i.getDoubleExtra("lon", 127.0390),
                     (i.getStringExtra("addr") ?: "서울 서초구 양재동").replace('_', ' '))
@@ -47,6 +54,7 @@ class ArcaDriveApp : Application() {
         const val ACTION_NEAR = "app.heyarca.drive.DEMO_NEAR"
         const val ACTION_RESET = "app.heyarca.drive.DEMO_RESET"
         const val ACTION_DEST = "app.heyarca.drive.DEMO_DEST"
-        val DEMO_ACTIONS = listOf(ACTION_SAY, ACTION_PCM, ACTION_NEAR, ACTION_RESET, ACTION_DEST)
+        const val ACTION_TASK = "app.heyarca.drive.DEMO_TASK"
+        val DEMO_ACTIONS = listOf(ACTION_SAY, ACTION_PCM, ACTION_NEAR, ACTION_RESET, ACTION_DEST, ACTION_TASK)
     }
 }

@@ -30,6 +30,10 @@ import ai.pleos.playground.vehicle.listener.BrakePedalStatusListener
 import ai.pleos.playground.vehicle.listener.DrivingTimeListener
 import ai.pleos.playground.vehicle.listener.EvBatteryStateOfChargeListener
 import ai.pleos.playground.vehicle.listener.GearSelectionListener
+import ai.pleos.playground.vehicle.listener.RangeRemainingListener
+import ai.pleos.playground.navi.constants.WaypointIndex
+import ai.pleos.playground.navi.data.RequestWaypointInfo
+import ai.pleos.playground.navi.data.WaypointChangedInfo
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.util.Locale
 import ai.pleos.playground.stt.constant.ErrorType as SttError
@@ -43,6 +47,8 @@ data class CarState(
     val restricted: Boolean = false,      // CarUxRestrictions: driver must not read/touch
     val brake: Boolean = false,
     val socPct: Int? = null,
+    val rangeM: Float? = null,            // RANGE_REMAINING from the Vehicle SDK
+    val waypoint: String? = null,         // charging stop added through NaviHelper
     val tripMinutes: Int? = null,
     val lat: Double? = null,
     val lon: Double? = null,
@@ -68,21 +74,13 @@ class PleosBridge(private val ctx: Context) {
     val heard = MutableStateFlow("")          // latest STT text
     val speaking = MutableStateFlow(false)
     val listening = MutableStateFlow(false)   // STT recognition in progress (orb LISTENING state)
-    val thinking = MutableStateFlow(false)    // driver finished talking, answer not spoken yet (orb THINKING state)
-    private val mainH = android.os.Handler(android.os.Looper.getMainLooper())
-    private val thinkReset = Runnable { thinking.value = false }
-    /** THINKING never sticks: it ends with the next say() or after 8 s. */
-    fun think(on: Boolean) {
-        mainH.removeCallbacks(thinkReset)
-        thinking.value = on
-        if (on) mainH.postDelayed(thinkReset, 8000L)
-    }
     val level = MutableStateFlow(0.0)         // mic / voice level for the orb
 
     var onUtterance: ((String) -> Unit)? = null
     var onGear: ((String) -> Unit)? = null
     var onArrived: ((String) -> Unit)? = null
     var onNearDestination: (() -> Unit)? = null
+    var onSoc: ((Int) -> Unit)? = null
 
     private var vehicle: Vehicle? = null
     private var navi: NaviHelper? = null
@@ -119,9 +117,20 @@ class PleosBridge(private val ctx: Context) {
             override fun onFailed(p0: Exception) {}
         })
         v.getEvBattery().registerEvBatteryStateOfCharge(object : EvBatteryStateOfChargeListener {
-            override fun onEvBatteryStateOfChargeUpdated(p0: Int?) = setCar { copy(socPct = p0) }
+            override fun onEvBatteryStateOfChargeUpdated(p0: Int?) = applySoc(p0)
             override fun onFailed(p0: Exception) {}
         })
+        v.getOdometer().registerRangeRemainingListener(object : RangeRemainingListener {
+            override fun onRangeRemainingChanged(p0: Float?) {
+                if (p0 == null) return
+                setCar { copy(rangeM = p0) }
+                Log.i(TAG, "RANGE ${(p0 / 1000).toInt()} km")
+                car.value.socPct?.let { s -> android.os.Handler(android.os.Looper.getMainLooper()).post { onSoc?.invoke(s) } }
+            }
+            override fun onFailed(p0: Exception) {}
+        })
+        val battery = v.getEvBattery()
+        battery.getEvBatteryStateOfCharge({ applySoc(it) }, {})
         v.getOdometer().registerTripCurrentDrivingTime(object : DrivingTimeListener {
             override fun onDrivingTimeUpdated(p0: Int?) = setCar { copy(tripMinutes = p0) }
             override fun onFailed(p0: Exception) {}
@@ -132,9 +141,17 @@ class PleosBridge(private val ctx: Context) {
         h.post(object : Runnable {
             override fun run() {
                 runCatching { gear.getCurrentGearSelectionState({ g -> h.post { if (pollN++ % 10 == 0) Log.i(TAG, "GEAR poll=$g ui=${car.value.gear}"); if (System.currentTimeMillis() - lastPushTs > 2500) applyGear(g) } }, { e -> Log.w(TAG, "GEAR poll fail ${e.message}") }) }
+                if (pollN % 3 == 0) runCatching { v.getEvBattery().getEvBatteryStateOfCharge({ s -> h.post { applySoc(s) } }, {}) }
                 h.postDelayed(this, 1000)
             }
         })
+    }
+
+    private fun applySoc(p0: Int?) {
+        p0 ?: return
+        val changed = p0 != car.value.socPct
+        setCar { copy(socPct = p0) }
+        if (changed) { Log.i(TAG, "SOC $p0%"); android.os.Handler(android.os.Looper.getMainLooper()).post { onSoc?.invoke(p0) } }
     }
 
     @Volatile private var lastPushTs = 0L
@@ -199,8 +216,8 @@ class PleosBridge(private val ctx: Context) {
             if (destinationInfo.remainDistance > 0) { tripFromNavi = true; setCar { copy(destination = destinationInfo.name, remainSec = destinationInfo.remainTime, remainM = destinationInfo.remainDistance) } }
             mark { copy(navi = "OK · ${destinationInfo.name}") }
         }
-        override fun onDestinationChanged() { navi?.getDestinationInfo() }
-        override fun onRoutingCompleted() { navi?.getDestinationInfo() }
+        override fun onDestinationChanged() { naviAsync { getDestinationInfo() } }
+        override fun onRoutingCompleted() { naviAsync { getDestinationInfo() } }
         override fun onTripInfo(tripInfo: TripInfo) {
             Log.i(TAG, "NAVI trip eta=${tripInfo.eta} dist=${tripInfo.distance}")
             if (tripInfo.distance > 0) tripFromNavi = true
@@ -210,8 +227,17 @@ class PleosBridge(private val ctx: Context) {
             setCar { copy(arrivedAt = destinationArrivedInfo.name, remainSec = 0, remainM = 0) }
             onArrived?.invoke(destinationArrivedInfo.name)
         }
-        override fun onError(errorCode: NaviErrorCode) { mark { copy(navi = "ERR $errorCode") } }
+        override fun onWaypointChanged(waypointChangedInfo: WaypointChangedInfo) {
+            // log only: a synchronous navi query from this callback blocked the UI thread while the engine re-routed
+            Log.i(TAG, "NAVI waypoint ${waypointChangedInfo.cmdType} ${waypointChangedInfo.index}")
+        }
+        override fun onError(errorCode: NaviErrorCode) { Log.w(TAG, "NAVI error $errorCode"); mark { copy(navi = "ERR $errorCode") } }
     }
+
+    private val naviThread = android.os.HandlerThread("navi-io").apply { start() }
+    private val naviIo = android.os.Handler(naviThread.looper)
+    /** NaviHelper requests can block while the engine re-routes; never make them on the UI thread. */
+    private fun naviAsync(f: NaviHelper.() -> Unit) { naviIo.post { runCatching { navi?.f() }.onFailure { Log.w(TAG, "navi", it) } } }
 
     fun setDestination(name: String, lat: Double, lon: Double, address: String) {
         Log.i(TAG, "DEST $name $lat,$lon")
@@ -224,9 +250,16 @@ class PleosBridge(private val ctx: Context) {
         // the navi engine answers asynchronously; re-ask until ETA arrives
         val h = android.os.Handler(android.os.Looper.getMainLooper())
         listOf(2500L, 6000L, 12000L).forEach { d -> h.postDelayed({
-            if (car.value.remainM == null) runCatching { navi?.requestTrip(TripRequest(lat, lon, "", name, "0")); navi?.getDestinationInfo() }
+            if (car.value.remainM == null) naviAsync { requestTrip(TripRequest(lat, lon, "", name, "0")); getDestinationInfo() }
         }, d) }
         watchArrival(lat, lon)
+    }
+
+    /** Proactive charging stop: a real NaviHelper waypoint on the active route. */
+    fun addChargingStop(name: String, lat: Double, lon: Double, address: String) {
+        Log.i(TAG, "WAYPOINT add $name $lat,$lon")
+        setCar { copy(waypoint = name) }
+        naviAsync { addWaypoint(RequestWaypointInfo(lat, lon, name, WaypointIndex.FIRST, "", address, "0", "")) }
     }
 
     // ---------- FusedLocation SDK: where the car is + 300 m geofence on the destination ----------
@@ -283,13 +316,13 @@ class PleosBridge(private val ctx: Context) {
     private val sttListener = object : ResultListener {
         override fun onUpdated(p0: String, p1: Boolean) {
             heard.value = p0
-            if (p1) { listening.value = false; think(p0.isNotBlank()); level.value = 0.0; Log.i(TAG, "HEARD: $p0") }
+            if (p1) { listening.value = false; level.value = 0.0; Log.i(TAG, "HEARD: $p0") }
             if (p1 && p0.isNotBlank()) onUtterance?.invoke(p0)
         }
         override fun onUpdatedEpdData(p0: Long, p1: Long) {}
         override fun onStartedRecognition() { listening.value = true; mark { copy(stt = "OK · listening") } }
-        override fun onEndedRecognition() { if (listening.value) think(true); listening.value = false; mark { copy(stt = "OK · on-device ko-KR") }; level.value = 0.0 }
-        override fun onError(p0: SttError) { listening.value = false; think(false); mark { copy(stt = "ERR $p0") } }
+        override fun onEndedRecognition() { listening.value = false; mark { copy(stt = "OK · on-device ko-KR") }; level.value = 0.0 }
+        override fun onError(p0: SttError) { listening.value = false; mark { copy(stt = "ERR $p0") } }
         override fun onReady() {}
         override fun onUpdatedRms(p0: Double) { level.value = p0 }
     }
@@ -313,8 +346,6 @@ class PleosBridge(private val ctx: Context) {
                 }
                 stt?.completeAudioSend()
                 level.value = 0.0
-                think(true)
-                Log.i(TAG, "THINK start")
             }
         }.start()
     }
@@ -348,7 +379,6 @@ class PleosBridge(private val ctx: Context) {
 
     fun say(text: String) {
         Log.i(TAG, "SAY: $text")
-        think(false)
         // orb SPEAKING state: from the TTS onStart/onDone callbacks; if the platform gives none
         // (e.g. an emulator without an audio device), fall back to an estimate from the text length.
         speaking.value = true

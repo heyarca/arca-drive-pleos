@@ -10,6 +10,24 @@
 - `apk/ArcaLabs_ARCADrive_release.apk` (release 빌드, v1.2.0, 서명됨)
 - 패키지: `app.heyarca.drive`
 
+## v1.2 — 주행 중에 일을 맡기는 순간 3가지 (에뮬레이터에서 실제 동작)
+
+| 운전자가 하는 말 / 차량 상황 | 실제로 일어나는 일 | 결과물 |
+|---|---|---|
+| "오늘 오전 회의, 요약해서 팀에 보내놔." | STT 인식 → 구체가 '생각 중'으로 바뀌고, 오늘 회의 전사 파일에서 결정·할 일(담당자·기한)을 뽑아 요약 파일과 팀 채널 **초안**을 만듭니다. 외부로는 보내지 않고, 주차 후 '확인 후 보내기'를 눌러야 발송함에 들어갑니다. | `files/out/meeting_summary_<날짜>.md` |
+| "오늘 찍은 사진들로 릴스 하나 만들어줘." | 주행 중 백그라운드에서 MediaCodec(H.264)+MediaMuxer로 9:16 릴스를 실제 인코딩합니다. 제목 카드는 NaviHelper 목적지로 만들고, 사진은 천천히 확대·팬하며 크로스페이드됩니다. 완성되면 음성으로 알리고, 주차 후 카드에서 바로 재생합니다. | `files/reels/drive_reel_<날짜>.mp4` (720×1280, 30fps) |
+| 배터리 SoC가 떨어짐 (Vehicle SDK `EV_BATTERY_SOC`, `RANGE_REMAINING`) | 남은 거리와 오늘 다음 일정(왕복 거리)을 비교해 먼저 말을 겁니다. "응"이라고 하면 NaviHelper `addWaypoint`로 목적지 건물 충전소를 경유지에 넣습니다. | 경유지 추가, 카드 기록 |
+
+- 주행 중 화면에는 구체와 한 줄, 진행 상태 알약 하나만 보입니다. 카드·재생·승인은 기어 P에서만 열립니다.
+- 시연 데이터: 회의 전사(`assets/meetings/`)와 드라이브 사진 5장(`assets/drive_cam/`, 생성 이미지)은 앱 안에 시연용으로 넣었습니다. 실차에서는 회의 녹음 전사와 차량 카메라/폰 사진을 같은 폴더(`files/meetings`, `files/drive_cam`)로 받으면 됩니다. 다음 일정(14:00 수원 고객사 미팅, 왕복 92km)과 충전소 좌표도 시연용 값입니다.
+- 에뮬레이터 주의: Pleos Connect v2 에뮬레이터(swiftshader GPU)에서 기본 3D 주행뷰 `ai.umos.drivingview`가 D단에서 반복 종료되며 앱 TaskView가 회색으로 비는 현상이 있어, `scripts/fresh_emulator.sh`가 시연 전에 `pm disable-user --user 10 ai.umos.drivingview`를 실행합니다(앱과 무관, `pm enable`로 복구).
+- 결과물은 차량 프로필의 공유 저장소에도 게시됩니다: `Movies/ARCA Drive/drive_reel_<날짜>.mp4`, `Documents/ARCA Drive/meeting_summary_<날짜>.md` (MediaStore).
+- 에뮬레이터 재현: `scripts/demo_scenario.sh`가 Virtual Console HTTP API로 기어·속도·배터리·주행가능거리를 바꾸고, 운전자 음성 PCM(`meeting`, `reel`, `yes_charge`)을 STT SDK에 넣습니다. 테스트 훅: `DEMO_TASK --es name meeting|reel|confirm`.
+
+## 구체 (Thinking orb)
+
+가운데 구체는 MIT 라이선스 오픈소스 [thinking-orbs](https://github.com/Jakubantalik/Libraries.dev/tree/main/packages/thinking-orbs) (Jakub Antalik, libraries.dev/orbs)의 기하 엔진을 Kotlin/Compose로 옮긴 것입니다 (`Orb.kt`). 점으로 된 3D 구를 회전·깊이 정렬해 그리며, 상태마다 라이브러리의 모드를 씁니다: 대기·듣기·말하기 = wave, 생각 = globe(스캔), 백그라운드 작업 = orbits. 색은 현대 네이비(#002C5F) 한 가지입니다.
+
 ## 개발·테스트 환경
 
 | 항목 | 값 |
@@ -87,7 +105,8 @@ app/src/main/java/app/heyarca/drive/
   CompanionBrain.kt  # 약속 판단: 브리핑, 음성 답장, 이름 보정, 도착 알림, 주차 정리
   PromiseStore.kt    # 약속/증거 저장
   MainActivity.kt    # Compose UI (주행: 구체 + 한 줄 / 주차: 1탭 카드), Gleo 액션 처리
-  Orb.kt             # 남색 구체(현대 CI Hyundai Blue #002C5F 계열): AGSL RuntimeShader(API 33+), 대기·듣기(STT RMS)·생각 중(인식~응답 사이 맥동·흐름)·말하기(TTS)·발송 링 상태
+  Orb.kt             # 생각하는 구체: thinking-orbs(MIT) 기하 엔진 Kotlin 포팅, 현대 네이비 #002C5F 한 색. 대기·듣기·말하기=wave, 생각=globe, 백그라운드 작업=orbits
+  Moments.kt         # 주행 중 맡기는 일: 회의 요약(초안), 릴스 인코딩(MediaCodec), 공유 저장소 게시
 app/src/main/assets/schema.json   # Gleo App Schema
 scripts/                          # 에뮬레이터·시연 자동화
 ```
