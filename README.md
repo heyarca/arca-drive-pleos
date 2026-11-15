@@ -15,10 +15,18 @@
 | 항목 | 값 |
 |---|---|
 | 에뮬레이터 | Pleos Connect v2 AVD (`connect-avd/2.x/crp_car_arm64_emulator.zip`), Android 14 / API 34, arm64-v8a |
+| 시스템 이미지 빌드 | `RELEASE.release_connect_v2.1.0` (fingerprint `Pleos/crp_avd_arm64/crp_avd_arm64:14/RELEASE.release_connect_v2.1.0/release_connect_v2.1.0:user/test-keys`) |
+| Android Emulator | 37.2.13.0 (macOS, Apple Silicon) |
 | AVD 디바이스 | `Pleos_Connect_v2_0` |
-| 화면 규격 | 2560 × 1440 (앱 영역 1682 × 1210, 우측 앱 화면) |
+| 화면 규격 | 2560 × 1440, density 160 (앱 영역 1682 × 1210 = TaskView 853,90 – 2535,1300) |
 | 빌드 | JDK 17, Gradle 8.9, AGP 8.5.2, Kotlin 2.0.21, Jetpack Compose |
 | minSdk / targetSdk | 28 / 34 |
+
+## 주행 중 동작 (주행 규제)
+
+- `AndroidManifest.xml`에 `distractionOptimized=true`를 선언하고, Pleos Playground 주행 규제 개발 가이드대로 `CarUxRestrictionsManager`를 함께 봅니다.
+- 기어가 P가 아니거나 `isRequiresDistractionOptimization()`이면 음성 전용(구체 + 한 줄). P이면서 제한이 없을 때만 1탭 카드.
+- 기어 콜백이 늦는 경우를 대비해 `getCurrentGearSelectionState`를 1 Hz로 다시 조회합니다.
 
 ## 사용한 Pleos Playground SDK
 
@@ -35,6 +43,8 @@ Android Automotive `CarUxRestrictionsManager`도 함께 확인해, 주행 제한
 
 ## 실행 방법
 
+필요한 설정: 별도 API 키·계정·서버가 없습니다. 약속 데이터는 앱 안에 시연용으로 들어 있고, 메시지는 앱 안의 발송함에 기록됩니다(외부 발송 채널은 2차 PT 전에 연결 예정). `-g` 옵션으로 설치하면 Pleos 권한(CAR_DRIVE, CAR_ENERGY, NAVI_ROUTE, FUSED_LOCATION, STT_SERVICE, TTS_SERVICE)이 함께 허용됩니다.
+
 1. Pleos Playground 개발 문서대로 Pleos Connect 에뮬레이터를 실행합니다.
 2. `adb install -r -g apk/ArcaLabs_ARCADrive_release.apk`
 3. 앱 실행: `adb shell am start -n app.heyarca.drive/.MainActivity` (또는 앱 목록의 ARCA Drive)
@@ -49,6 +59,15 @@ REC=1 bash scripts/demo_scenario.sh    # 화면 녹화 포함
 ```
 
 운전자 음성 PCM(16 kHz mono s16le, `app/src/main/assets/demo/`)은 합성한 자연스러운 한국어 음성이며, 실제 Pleos STT SDK(ON_DEVICE)에 넣어 인식합니다.
+
+### Gleo App Schema 호출 확인
+
+```bash
+adb shell am start -a ADD_PROMISE -n app.heyarca.drive/.MainActivity --es ACTION_PARAM '{"counterpart":"최민호_실장","content":"계약서_검토_회신"}'
+adb shell am start -a BRIEF_MY_PROMISES -n app.heyarca.drive/.MainActivity --es ACTION_PARAM '{"scope":"today"}'
+```
+
+결과는 `ai.pleos.playground.intent.action.APP_ACTION_RESPONSE` 브로드캐스트로 돌려줍니다(`adb shell dumpsys activity broadcasts history`로 확인).
 
 데모용 브로드캐스트(테스트 훅): `app.heyarca.drive.DEMO_PCM --es name <yes_send|quote|yes|remember>` (음성 PCM을 STT SDK로), `DEMO_DEST`, `DEMO_NEAR`(지오펜스 ENTER와 같은 경로), `DEMO_RESET`.
 
